@@ -57,7 +57,7 @@
 #define TOYPAD_EVENT_INTERVAL_MS 500
 #endif
 
-// Minimum delay between two writes of toytags.json to flash.
+// Minimum delay between two writes of the saved tokens to flash.
 #ifndef TOYPAD_SAVE_INTERVAL_MS
 #define TOYPAD_SAVE_INTERVAL_MS 1000
 #endif

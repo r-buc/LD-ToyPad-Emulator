@@ -10,6 +10,8 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
+#include <memory>
+
 namespace {
 
 constexpr size_t MAX_BODY_SIZE = 512;
@@ -83,14 +85,18 @@ void setupWebApi(AsyncWebServer &server, AsyncEventSource &events, ToyPadService
   });
   server.addHandler(&events);
 
-  // Served from RAM so the UI always sees the current state (registered before the static handler).
+  // The toy tags as minified JSON, rendered in chunks from the compact in-memory store
+  // (registered before the static handler).
   server.on("/json/toytags.json", HTTP_GET, [&service](AsyncWebServerRequest *request) {
-    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", service.toyTagsJson());
+    auto writer = std::make_shared<ld::TagJsonWriter>(service.tags());
+    AsyncWebServerResponse *response = request->beginChunkedResponse(
+      "application/json", [writer](uint8_t *buffer, size_t maxLen, size_t) { return writer->write(buffer, maxLen); }
+    );
     response->addHeader("Cache-Control", "no-cache");
     request->send(response);
   });
 
-  // Create a new character and save it to toytags.json
+  // Create a new character and save it
   onJson(server, "/character", HTTP_POST, [&service](AsyncWebServerRequest *request, JsonDocument &doc) {
     uint32_t id;
     if (!readUInt(doc, "id", 1, 0xFFFF, id)) return request->send(400, "text/plain", "Invalid id");
@@ -99,7 +105,7 @@ void setupWebApi(AsyncWebServer &server, AsyncEventSource &events, ToyPadService
     sendResult(request, result, uid.c_str());
   });
 
-  // Create a new vehicle/gadget and save it to toytags.json, responds with its UID
+  // Create a new vehicle/gadget and save it, responds with its UID
   onJson(server, "/vehicle", HTTP_POST, [&service](AsyncWebServerRequest *request, JsonDocument &doc) {
     uint32_t id;
     if (!readUInt(doc, "id", 1, 0xFFFF, id)) return request->send(400, "text/plain", "Invalid id");

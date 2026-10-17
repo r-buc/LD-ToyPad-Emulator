@@ -102,7 +102,7 @@ void writeU16BE(uint8_t *p, uint16_t v);
 bool parseUid(const char *hex, uint8_t out[UID_SIZE]);
 std::string formatUid(const uint8_t uid[UID_SIZE]);
 // Generates a random NXP-like UID (04 xx xx xx xx xx 80) from a random source.
-std::string randomUid(uint32_t (*random32)());
+void randomUid(uint32_t (*random32)(), uint8_t out[UID_SIZE]);
 
 // Maps the raw RGB values the game sends to a colour suitable for display in
 // the web UI (same lookup table as the Node.js implementation).

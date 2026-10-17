@@ -5,61 +5,77 @@
 	See file "LICENSE" or go to "https://choosealicense.com/licenses/mit" for full license details.
 */
 
-// In-memory list of the user's toy tags, persisted as JSON in exactly the
-// same format as the Node.js version's server/json/toytags.json so the web UI
-// can keep consuming it unchanged.
+
+// The user's toy tags in a compact binary form (20 bytes per tag in RAM,
+// 18 bytes per record on flash). Names are not stored, they come from the
+// compiled-in catalog. TagJsonWriter renders the minified JSON for the web UI
+// in small chunks, so the whole document is never held in memory.
 
 #pragma once
 
-#include <ArduinoJson.h>
+#include "ToyPadProtocol.h"
 
+#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace ld {
 
-struct TagEntry {
-  std::string name;
-  uint16_t id = 0;
-  std::string uid;
-  int index = -1; // position on the pad (1..7) or -1 when in the toy box
-  std::string type; // "character" or "vehicle"
-  uint32_t vehicleUpgradesP23 = 0;
-  uint32_t vehicleUpgradesP25 = 0;
+enum class TagType : uint8_t { Character = 0, Vehicle = 1 };
 
-  bool isCharacter() const { return type == "character"; }
+struct TagEntry {
+  uint8_t uid[UID_SIZE] = {};
+  TagType type = TagType::Character;
+  int8_t index = -1; // position on the pad (1..7) or -1 in the toy box; not persisted
+  uint16_t id = 0;
+  uint32_t upgradesP23 = 0;
+  uint32_t upgradesP25 = 0;
 };
 
 class TagStore {
 public:
-  // Loads the store from a JSON array. Returns false (and leaves the store
-  // empty) when the input cannot be parsed.
-  template <typename TInput> bool load(TInput &input) {
-    JsonDocument doc;
-    if (deserializeJson(doc, input)) {
-      entries_.clear();
-      return false;
+  // File format: "LDTT", version byte, then RECORD_SIZE bytes per tag:
+  // uid[7], type, id (LE u16), upgradesP23 (LE u32), upgradesP25 (LE u32).
+  static constexpr uint8_t MAGIC[4] = {'L', 'D', 'T', 'T'};
+  static constexpr uint8_t VERSION = 1;
+  static constexpr size_t RECORD_SIZE = UID_SIZE + 1 + 2 + 4 + 4;
+
+  // Reads the tags from a stream with read(uint8_t *, size_t). Returns false
+  // (and leaves the store empty) if the data is invalid.
+  template <typename TStream> bool load(TStream &in) {
+    entries_.clear();
+    uint8_t header[sizeof(MAGIC) + 1];
+    if (in.read(header, sizeof(header)) != sizeof(header) || !validHeader(header)) return false;
+    uint8_t record[RECORD_SIZE];
+    for (;;) {
+      size_t n = in.read(record, RECORD_SIZE);
+      if (n == 0) return true;
+      TagEntry entry;
+      if (n != RECORD_SIZE || !decode(record, entry)) {
+        entries_.clear();
+        return false;
+      }
+      entries_.push_back(entry);
     }
-    return loadFrom(doc);
   }
 
-  // Serialises the store as pretty printed JSON array.
-  template <typename TOutput> size_t save(TOutput &output) const {
-    JsonDocument doc;
-    saveTo(doc);
-    return serializeJsonPretty(doc, output);
+  // Writes tags to a stream with write(const uint8_t *, size_t).
+  template <typename TStream> static bool save(const std::vector<TagEntry> &entries, TStream &out) {
+    uint8_t header[sizeof(MAGIC) + 1] = {MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3], VERSION};
+    if (out.write(header, sizeof(header)) != sizeof(header)) return false;
+    uint8_t record[RECORD_SIZE];
+    for (const TagEntry &e : entries) {
+      encode(e, record);
+      if (out.write(record, RECORD_SIZE) != RECORD_SIZE) return false;
+    }
+    return true;
   }
 
-  bool loadFrom(const JsonDocument &doc);
-  void saveTo(JsonDocument &doc) const;
-
-  TagEntry *find(const std::string &uid);
-  const TagEntry *find(const std::string &uid) const;
+  TagEntry *find(const uint8_t uid[UID_SIZE]);
   TagEntry *findByIndex(int index);
-  TagEntry &add(const TagEntry &entry);
-  bool erase(const std::string &uid);
-  bool setIndex(const std::string &uid, int index);
+  void add(const TagEntry &entry);
+  bool erase(const uint8_t uid[UID_SIZE]);
+  bool setIndex(const uint8_t uid[UID_SIZE], int index);
   // Marks every tag as being in the toy box (index -1).
   void resetIndexes();
 
@@ -72,36 +88,33 @@ public:
   void clearDirty() { dirty_ = false; }
 
 private:
+  static bool validHeader(const uint8_t *header);
+  static void encode(const TagEntry &entry, uint8_t *record);
+  static bool decode(const uint8_t *record, TagEntry &entry);
+
   std::vector<TagEntry> entries_;
   bool dirty_ = false;
 };
 
-// Read-only id -> name lookup built from charactermap.json / tokenmap.json.
-class Catalog {
+// Renders tags as the minified JSON array read by the web UI
+// ([{"uid":"…","id":1,"type":"character","index":-1,"name":"Batman"},…])
+// into buffers of any size.
+class TagJsonWriter {
 public:
-  template <typename TInput> bool load(TInput &input) {
-    JsonDocument filter;
-    filter[0]["id"] = true;
-    filter[0]["name"] = true;
-    JsonDocument doc;
-    if (deserializeJson(doc, input, DeserializationOption::Filter(filter))) return false;
-    return loadFrom(doc);
-  }
+  explicit TagJsonWriter(std::vector<TagEntry> entries) : entries_(std::move(entries)) {}
 
-  bool loadFrom(const JsonDocument &doc);
-  // Returns "N/A" for unknown ids (like the Node.js implementation).
-  std::string name(uint16_t id) const;
-  bool contains(uint16_t id) const;
-  size_t size() const { return entries_.size(); }
+  // Fills up to maxLen bytes; returns 0 when the document is complete.
+  size_t write(uint8_t *buffer, size_t maxLen);
 
 private:
-  struct Entry {
-    uint16_t id;
-    std::string name;
-  };
-  const Entry *lookup(uint16_t id) const;
+  void renderNext();
 
-  std::vector<Entry> entries_; // sorted by id
+  std::vector<TagEntry> entries_;
+  size_t next_ = 0;    // next entry to render
+  bool done_ = false;  // closing bracket rendered
+  char pending_[160];  // rendered text not yet copied out
+  size_t pendingLen_ = 0;
+  size_t pendingPos_ = 0;
 };
 
 } // namespace ld

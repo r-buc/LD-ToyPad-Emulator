@@ -17,6 +17,7 @@
 
 #include <Arduino.h>
 
+#include "Catalog.h"
 #include "TagStore.h"
 #include "ToyPadEmulator.h"
 
@@ -35,14 +36,14 @@ public:
 
   ToyPadService();
 
-  // Loads catalogs and saved toy tags from LittleFS.
+  // Loads the saved toy tags from LittleFS.
   bool begin(ReportSender sender, Notifier notifier);
 
   // --- USB side, called from loop() ---
   void handleReport(const uint8_t *report, size_t len);
   // Sends queued tag place/remove events to the game.
   void flushEvents();
-  // Writes toytags.json if it changed.
+  // Writes the toy tags to flash if they changed.
   void persist();
 
   // --- Web side ---
@@ -52,7 +53,8 @@ public:
   Result remove(uint8_t index, const std::string &uid);
   Result deleteToken(const std::string &uid);
   void sync();
-  String toyTagsJson();
+  // Copy of all tags (20 bytes each) for TagJsonWriter.
+  std::vector<ld::TagEntry> tags();
   String statusJson();
   bool connected() const { return connected_; }
 
@@ -81,15 +83,12 @@ private:
 
   void notify(const char *event, const String &json = "null");
   void deliverNotifications();
-  std::string newUid() const; // caller must hold mutex_
-  std::string anyName(uint16_t id) const;
-  Result createEntry(uint16_t id, const char *type, uint32_t upgrades, std::string &uid);
+  void newUid(uint8_t uid[ld::UID_SIZE]); // caller must hold mutex_
+  Result createEntry(uint16_t id, ld::TagType type, uint32_t upgrades, std::string &uid);
 
   SemaphoreHandle_t mutex_;
   ld::ToyPadEmulator emulator_;
   ld::TagStore store_;
-  ld::Catalog characters_;
-  ld::Catalog vehicles_;
   ReportSender sender_;
   Notifier notifier_;
   std::vector<Notification> pending_;

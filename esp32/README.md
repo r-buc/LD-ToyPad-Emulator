@@ -17,9 +17,10 @@ Browser (same web UI as the Node.js version: server/)
 ESP32-S3
   ├─ ESPAsyncWebServer   WebApi.cpp            HTTP API + static files
   ├─ ToyPadService       ToyPadService.cpp     glue, locking, persistence
-  ├─ Protocol            ToyPadEmulator.cpp,   protocol (port of node-ld) + toytags.json store
-  │                      ToyPadProtocol.cpp, TagStore.cpp
-  ├─ LittleFS            web UI, character/vehicle maps, toytags.json
+  ├─ Protocol            ToyPadEmulator.cpp,   protocol (port of node-ld), compact tag store,
+  │                      ToyPadProtocol.cpp,   compiled-in character/vehicle catalog
+  │                      TagStore.cpp, Catalog.cpp
+  ├─ LittleFS            web UI (static files), toytags.bin
   └─ TinyUSB HID         UsbToyPad.cpp         "LEGO READER V2.10"
            │ USB
 Console / PC
@@ -31,7 +32,8 @@ All files are tabs of the sketch `LDToyPadEmulator/`:
 | --- | --- |
 | `ToyPadProtocol.*` | Frame format (32 byte reports, checksum), command ids, TEA cipher and Burtle random generator used in the authentication, UID helpers, colour conversion. |
 | `ToyPadEmulator.*` | Toy Pad state machine (port of `ToyPadEmu.js` from [node-ld](https://github.com/Berny23/node-ld)): answers `WAKE`, `SEED`, `CHAL`, `READ`, `WRITE`, `MODEL`, `COL`, `FADE`, `COLAL`, `FADAL`, …, keeps the tokens on the pad and queues place/remove events. Hardware independent. |
-| `TagStore.*` | `toytags.json` compatible token storage and character/vehicle catalogs. Hardware independent. |
+| `TagStore.*` | Compact token storage (20 bytes per token in RAM, binary file on flash) and the chunked JSON writer for the web UI. Hardware independent. |
+| `Catalog.*`, `CatalogData.h` | Character/vehicle ids and names compiled into the firmware. `CatalogData.h` is generated from `server/json/charactermap.json` and `tokenmap.json` by `esp32/tools/generate_catalog.py`, so the firmware never parses these files. |
 | `UsbToyPad.*` | TinyUSB HID device with the same identity and report descriptor as `usb_setup_script.sh`. |
 | `ToyPadService.*` | Connects USB, protocol, storage and web UI. Port of the logic in `index.js`. |
 | `WebApi.*` | HTTP routes (see below). |
@@ -64,10 +66,10 @@ The routes of the Node.js server are kept, the Socket.IO messages are replaced b
 | `POST` | `/vehicle` | `{"id": 1000}` | Create a vehicle/gadget token, responds with its UID |
 | `POST` | `/place` | `{"uid": "…", "position": 2, "index": 4}` | Place a token on the pad (`position` 1 = centre, 2 = left, 3 = right; `index` 1–7 like the UI's toy pad boxes) |
 | `DELETE` | `/remove` | `{"index": 4, "uid": "…"}` | Remove a token from the pad |
-| `DELETE` | `/token` | `{"uid": "…"}` | Delete a token from `toytags.json` (Socket.IO `deleteToken`) |
-| `POST` | `/sync` | – | Re-synchronise the saved positions in `toytags.json` with the tokens on the pad (Socket.IO `syncToyPad`) |
+| `DELETE` | `/token` | `{"uid": "…"}` | Delete a saved token (Socket.IO `deleteToken`) |
+| `POST` | `/sync` | – | Re-synchronise the positions in the token list with the tokens on the pad (Socket.IO `syncToyPad`) |
 | `GET` / `POST` | `/status` | – | `{"connected": …, …}`; `POST` also re-sends `Connection True` (Socket.IO `connectionStatus`) |
-| `GET` | `/json/toytags.json` | – | All saved tokens (also usable as backup) |
+| `GET` | `/json/toytags.json` | – | All saved tokens as minified JSON (`[{"uid","id","type","index","name"}, …]`), streamed in chunks |
 | `GET` | `/events` | – | Server-Sent Events: `refreshTokens`, `Color One`, `Color All`, `Fade One`, `Fade All`, `Connection True` (`data` is the JSON array that was emitted via Socket.IO before) |
 
 Everything else is served from LittleFS (the `server/` directory of this repository).
@@ -149,13 +151,24 @@ Log output (*Tools > Core Debug Level*) goes to UART0 (U0TXD, 115200 baud), beca
 
 ## Saved tokens
 
-Tokens are stored in `/json/toytags.json` on LittleFS in the same format as the Node.js version, so the file can be copied between both versions.
+Tokens are kept in RAM in a compact binary form (20 bytes each) and saved to `/toytags.bin` on LittleFS
+(a 5 byte header plus 18 bytes per token: UID, type, id and the two vehicle upgrade words). Names are not stored,
+they come from the compiled-in catalog. Positions on the pad are not saved, the pad is empty after a restart.
+The format is not compatible with the Node.js version's `toytags.json`.
 
 > [!WARNING]
-> Uploading the web UI (LittleFS image) overwrites the whole file system including your saved tokens. Download `http://ldtoypad.local/json/toytags.json`
-> first and copy it to `data/json/toytags.json` (or `server/json/toytags.json` for arduino-cli) before uploading the file system again.
+> Uploading the web UI (LittleFS image) overwrites the whole file system including your saved tokens.
 
-If the file is corrupted it is renamed to `toytags.json.bak` and an empty list is used. At most 400 tokens can be stored.
+If the file is corrupted it is renamed to `toytags.bin.bak` and an empty list is used. At most 400 tokens can be stored.
+
+### Changing the character/vehicle lists
+
+The web UI reads `server/json/charactermap.json` and `tokenmap.json`, the firmware uses the generated `CatalogData.h`.
+After changing the JSON files, regenerate it and rebuild the firmware:
+
+```bash
+python3 esp32/tools/generate_catalog.py
+```
 
 ## Limitations and differences to the Node.js version
 

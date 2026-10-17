@@ -21,6 +21,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Check that CatalogData.h matches the JSON maps
+        run: |
+          python3 esp32/tools/generate_catalog.py
+          git diff --exit-code -- esp32/LDToyPadEmulator/CatalogData.h
       - uses: arduino/setup-arduino-cli@v2
       - name: Install ESP32 core and libraries
         run: |

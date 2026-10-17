@@ -141,12 +141,10 @@ std::string formatUid(const uint8_t uid[UID_SIZE]) {
   return std::string(buf);
 }
 
-std::string randomUid(uint32_t (*random32)()) {
-  uint8_t uid[UID_SIZE];
+void randomUid(uint32_t (*random32)(), uint8_t uid[UID_SIZE]) {
   uid[0] = 0x04; // vendor id 04 = NXP
   uid[6] = 0x80; // for whatever reason the last byte of the UID is mostly 0x8*
   for (size_t i = 1; i < 6; i++) uid[i] = static_cast<uint8_t>(random32() & 0xFF);
-  return formatUid(uid);
 }
 
 std::string displayColor(uint8_t r, uint8_t g, uint8_t b) {
