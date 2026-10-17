@@ -1,5 +1,6 @@
 node_modules
 
-# ESP32-S3 firmware (PlatformIO)
-esp32/.pio/
-esp32/include/wifi_secrets.h
+# ESP32-S3 sketch
+esp32/LDToyPadEmulator/wifi_secrets.h
+esp32/LDToyPadEmulator/data/
+esp32/LDToyPadEmulator/build/

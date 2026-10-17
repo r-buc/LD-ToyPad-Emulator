@@ -30,7 +30,7 @@ String color(const ld::Rgb &c) { return quoted(ld::displayColor(c.r, c.g, c.b));
 bool loadCatalog(ld::Catalog &catalog, const char *path) {
   File f = LittleFS.open(path, "r");
   if (!f) {
-    log_e("Missing %s - did you upload the filesystem image (pio run -t uploadfs)?", path);
+    log_e("Missing %s - did you upload the filesystem image (see README: upload the LittleFS image)?", path);
     return false;
   }
   bool ok = catalog.load(f);

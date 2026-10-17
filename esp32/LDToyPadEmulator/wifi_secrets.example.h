@@ -1,4 +1,4 @@
-// Copy this file to include/wifi_secrets.h (which is ignored by git) and
+// Copy this file to wifi_secrets.h in the same folder (which is ignored by git) and
 // fill in your credentials.
 
 #pragma once

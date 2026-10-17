@@ -16,7 +16,7 @@
 #include <USB.h>
 #include <USBHID.h>
 
-#include <ToyPadProtocol.h>
+#include "ToyPadProtocol.h"
 
 class UsbToyPad : public USBHIDDevice {
 public:

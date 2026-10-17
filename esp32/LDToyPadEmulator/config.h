@@ -6,9 +6,9 @@
 */
 
 // Build time configuration of the ESP32-S3 firmware.
-// Put your Wi-Fi credentials into include/wifi_secrets.h (see
-// include/wifi_secrets.example.h) or pass them as build flags, e.g.
-//   PLATFORMIO_BUILD_FLAGS='-DTOYPAD_WIFI_SSID=\"MyWifi\" -DTOYPAD_WIFI_PASSWORD=\"secret\"'
+// Put your Wi-Fi credentials into wifi_secrets.h next to this file (see
+// wifi_secrets.example.h) or pass them as build flags, e.g.
+//   arduino-cli compile --build-property 'compiler.cpp.extra_flags=-DTOYPAD_WIFI_SSID="MyWifi"' ...
 
 #pragma once
 

@@ -17,8 +17,8 @@
 
 #include <Arduino.h>
 
-#include <TagStore.h>
-#include <ToyPadEmulator.h>
+#include "TagStore.h"
+#include "ToyPadEmulator.h"
 
 #include <functional>
 #include <string>

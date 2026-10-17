@@ -7,11 +7,11 @@
 
 #include "UsbToyPad.h"
 
-#if !CONFIG_TINYUSB_HID_ENABLED
-#error "TinyUSB HID support is required (build with -DARDUINO_USB_MODE=0 for the USB-OTG/TinyUSB stack)"
+#if ARDUINO_USB_MODE || !CONFIG_TINYUSB_HID_ENABLED
+#error "Select Tools > USB Mode > USB-OTG (TinyUSB) (FQBN option USBMode=default)"
 #endif
 #if ARDUINO_USB_CDC_ON_BOOT
-#error "Disable USB CDC on boot (-DARDUINO_USB_CDC_ON_BOOT=0) so the device only exposes the Toy Pad HID interface"
+#error "Select Tools > USB CDC On Boot > Disabled (FQBN option CDCOnBoot=default) so the device only exposes the Toy Pad HID interface"
 #endif
 
 namespace {

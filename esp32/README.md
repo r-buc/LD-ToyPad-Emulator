@@ -1,6 +1,6 @@
 # Toy Pad Emulator for Lego Dimensions – ESP32-S3 firmware
 
-This directory contains a standalone port of the emulator for **ESP32-S3** boards
+This directory contains a standalone port of the emulator for **ESP32-S3** boards as an **Arduino sketch** (`LDToyPadEmulator/`)
 (developed for the [LilyGO T-Dongle-S3](https://github.com/Xinyuan-LilyGO/T-Dongle-S3),
 but any ESP32-S3 with access to the native USB pins works).
 
@@ -15,24 +15,29 @@ Browser (same web UI as the Node.js version: server/)
   └─ Server-Sent Events (/events): lights, connection state, refreshes
            │ Wi-Fi
 ESP32-S3
-  ├─ ESPAsyncWebServer   src/WebApi.cpp       HTTP API + static files
-  ├─ ToyPadService       src/ToyPadService.cpp glue, locking, persistence
-  ├─ ToyPadCore          lib/ToyPadCore/       protocol (port of node-ld) + toytags.json store
+  ├─ ESPAsyncWebServer   WebApi.cpp            HTTP API + static files
+  ├─ ToyPadService       ToyPadService.cpp     glue, locking, persistence
+  ├─ Protocol            ToyPadEmulator.cpp,   protocol (port of node-ld) + toytags.json store
+  │                      ToyPadProtocol.cpp, TagStore.cpp
   ├─ LittleFS            web UI, character/vehicle maps, toytags.json
-  └─ TinyUSB HID         src/UsbToyPad.cpp     "LEGO READER V2.10"
+  └─ TinyUSB HID         UsbToyPad.cpp         "LEGO READER V2.10"
            │ USB
 Console / PC
 ```
 
-| Module | Content |
+All files are tabs of the sketch `LDToyPadEmulator/`:
+
+| File | Content |
 | --- | --- |
-| `lib/ToyPadCore/src/ToyPadProtocol.*` | Frame format (32 byte reports, checksum), command ids, TEA cipher and Burtle random generator used in the authentication, UID helpers, colour conversion. |
-| `lib/ToyPadCore/src/ToyPadEmulator.*` | Toy Pad state machine (port of `ToyPadEmu.js` from [node-ld](https://github.com/Berny23/node-ld)): answers `WAKE`, `SEED`, `CHAL`, `READ`, `WRITE`, `MODEL`, `COL`, `FADE`, `COLAL`, `FADAL`, …, keeps the tokens on the pad and queues place/remove events. Hardware independent. |
-| `lib/ToyPadCore/src/TagStore.*` | `toytags.json` compatible token storage and character/vehicle catalogs. Hardware independent. |
-| `src/UsbToyPad.*` | TinyUSB HID device with the same identity and report descriptor as `usb_setup_script.sh`. |
-| `src/ToyPadService.*` | Connects USB, protocol, storage and web UI. Port of the logic in `index.js`. |
-| `src/WebApi.*` | HTTP routes (see below). |
-| `src/main.cpp` | Startup, Wi-Fi, mDNS, OTA and main loop. |
+| `ToyPadProtocol.*` | Frame format (32 byte reports, checksum), command ids, TEA cipher and Burtle random generator used in the authentication, UID helpers, colour conversion. |
+| `ToyPadEmulator.*` | Toy Pad state machine (port of `ToyPadEmu.js` from [node-ld](https://github.com/Berny23/node-ld)): answers `WAKE`, `SEED`, `CHAL`, `READ`, `WRITE`, `MODEL`, `COL`, `FADE`, `COLAL`, `FADAL`, …, keeps the tokens on the pad and queues place/remove events. Hardware independent. |
+| `TagStore.*` | `toytags.json` compatible token storage and character/vehicle catalogs. Hardware independent. |
+| `UsbToyPad.*` | TinyUSB HID device with the same identity and report descriptor as `usb_setup_script.sh`. |
+| `ToyPadService.*` | Connects USB, protocol, storage and web UI. Port of the logic in `index.js`. |
+| `WebApi.*` | HTTP routes (see below). |
+| `LDToyPadEmulator.ino` | `setup()` / `loop()`: startup, Wi-Fi, mDNS, OTA and USB request handling. |
+| `config.h`, `wifi_secrets.example.h` | Settings (Wi-Fi, access point, host name, OTA password, …). |
+| `partitions.csv` | 16 MB partition table with a LittleFS partition, picked up automatically by the Arduino build. |
 
 USB reports are processed in the Arduino loop task, while web requests run in the AsyncTCP task.
 All shared state is protected by a mutex and flash writes are debounced and never done from USB callbacks.
@@ -69,75 +74,96 @@ Everything else is served from LittleFS (the `server/` directory of this reposit
 
 ## Requirements
 
-- An ESP32-S3 board, e.g. LilyGO T-Dongle-S3 (16 MB flash) or ESP32-S3-DevKitC-1 (8 MB flash, use the port labelled **USB**, not **UART**).
-- [PlatformIO](https://platformio.org/install) (CLI or the VS Code extension). The Arduino core 3.x is pulled in automatically through the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform.
+- An ESP32-S3 board, e.g. LilyGO T-Dongle-S3 (16 MB flash) or ESP32-S3-DevKitC-1 (use the port labelled **USB**, not **UART**).
+- [Arduino IDE 2](https://www.arduino.cc/en/software) or [arduino-cli](https://arduino.github.io/arduino-cli/).
+- The **esp32** core by Espressif, version **3.x** (tested to compile with 3.2.0). Add
+  `https://espressif.github.io/arduino-esp32/package_esp32_index.json` under *File > Preferences > Additional boards manager URLs*
+  and install "esp32" in the Boards Manager.
+- Libraries (Library Manager):
+  - **ESP Async WebServer** by ESP32Async (3.9.x) and its dependency **Async TCP** by ESP32Async (3.5.x)
+  - **ArduinoJson** by Benoit Blanchon (7.x)
+- For uploading the web UI from the IDE: the [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) plugin.
 
-## Build and flash
+## Build and flash (Arduino IDE)
 
-1. Configure Wi-Fi: copy `include/wifi_secrets.example.h` to `include/wifi_secrets.h` and enter your network
-   (the file is ignored by git). All settings and their defaults are in `include/config.h`.
+1. Open `esp32/LDToyPadEmulator/LDToyPadEmulator.ino`.
+
+2. Configure Wi-Fi: copy `wifi_secrets.example.h` to `wifi_secrets.h` in the sketch folder and enter your network
+   (the file is ignored by git). All settings and their defaults are in `config.h`.
    Without a configured network, or if connecting fails, the emulator opens the access point
    **`LD-ToyPad`** with the password **`legodimensions`** (change it with `TOYPAD_AP_PASSWORD`).
 
-2. Put the board into download mode. The firmware uses the native USB port for the Toy Pad and therefore does **not**
-   provide a USB serial port, so after the first flash the board has to be put into download mode manually:
-   hold the **BOOT** button while plugging it in (T-Dongle-S3: the button next to the USB plug).
+3. Select the board **ESP32S3 Dev Module** and these options in the *Tools* menu:
 
-3. Build and upload the firmware and the web UI (from this directory):
+   | Option | Value |
+   | --- | --- |
+   | USB Mode | **USB-OTG (TinyUSB)** |
+   | USB CDC On Boot | **Disabled** |
+   | Flash Size | **16MB (128Mb)** (T-Dongle-S3) |
+   | Partition Scheme | **Custom** (uses `partitions.csv` from the sketch folder) |
+   | Core Debug Level | optional, e.g. Info |
 
-   ```bash
-   pio run -e t-dongle-s3 -t upload
-   pio run -e t-dongle-s3 -t uploadfs
-   ```
+   The sketch refuses to compile with the wrong USB options.
+   For boards with less than 16 MB flash, delete `partitions.csv` and pick a scheme with SPIFFS,
+   e.g. *8M with spiffs* for 8 MB boards.
 
-   Use `-e esp32-s3-devkitc-1` for other ESP32-S3 boards with 8 MB flash. The web UI (`../server`) is
-   uploaded unchanged to LittleFS.
+4. Put the board into download mode. The firmware uses the native USB port for the Toy Pad and therefore does **not**
+   provide a USB serial port, so the board has to be put into download mode manually:
+   hold the **BOOT** button while plugging it in (T-Dongle-S3: the button next to the USB plug) and select its port.
 
-4. Re-plug the board (without pressing BOOT) into the console or PC. It shows up as `LEGO READER V2.10`.
+5. *Sketch > Upload*.
 
-5. Open `http://ldtoypad.local/` (or the IP address shown in your router / on the serial log, or `http://192.168.4.1/` in access point mode)
+6. Upload the web UI: copy the contents of the repository's `server/` directory into a new folder
+   `esp32/LDToyPadEmulator/data/` (ignored by git), then press `Ctrl`+`Shift`+`P` and run
+   **Upload LittleFS to Pico/ESP8266/ESP32** (the serial monitor must be closed). Repeat after updating the repository.
+
+7. Re-plug the board (without pressing BOOT) into the console or PC. It shows up as `LEGO READER V2.10`.
+
+8. Open `http://ldtoypad.local/` (or the IP address shown in your router / on the serial log, or `http://192.168.4.1/` in access point mode)
    and use the UI exactly like the Node.js version.
+
+### Build and flash (arduino-cli)
+
+From the repository root, with the board in download mode on `/dev/ttyACM0`:
+
+```bash
+FQBN=esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,PartitionScheme=custom
+arduino-cli compile --fqbn "$FQBN" --upload --port /dev/ttyACM0 esp32/LDToyPadEmulator
+
+# Web UI: build a LittleFS image from server/ and write it to the "spiffs" partition of partitions.csv
+TOOLS=~/.arduino15/packages/esp32/tools
+$TOOLS/mklittlefs/*/mklittlefs -c server -p 256 -b 4096 -s 0x360000 littlefs.bin
+python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 write_flash 0xc90000 littlefs.bin
+```
+
+(`esptool` is available via `pip install esptool` or in `$TOOLS/esptool_py/`.)
 
 ### Updates without download mode
 
-If you set `TOYPAD_OTA_PASSWORD`, the firmware can be updated over Wi-Fi:
-
-```bash
-pio run -e t-dongle-s3 -t upload --upload-port ldtoypad.local -- --auth=<password>
-```
-
-(or set `upload_protocol = espota`, `upload_port` and `upload_flags = --auth=<password>` in `platformio.ini`).
+If you set `TOYPAD_OTA_PASSWORD`, the board appears as network port `ldtoypad` in the Arduino IDE
+(*Tools > Port*) and can be updated over Wi-Fi, the IDE asks for the password.
 
 ### Logs
 
-Log output (`CORE_DEBUG_LEVEL=3`) goes to UART0 (U0TXD, 115200 baud), because the native USB port is used by the Toy Pad.
+Log output (*Tools > Core Debug Level*) goes to UART0 (U0TXD, 115200 baud), because the native USB port is used by the Toy Pad.
 
 ## Saved tokens
 
 Tokens are stored in `/json/toytags.json` on LittleFS in the same format as the Node.js version, so the file can be copied between both versions.
 
 > [!WARNING]
-> `uploadfs` overwrites the whole file system including your saved tokens. Download `http://ldtoypad.local/json/toytags.json`
-> first and copy it to `server/json/toytags.json` before uploading the file system again.
+> Uploading the web UI (LittleFS image) overwrites the whole file system including your saved tokens. Download `http://ldtoypad.local/json/toytags.json`
+> first and copy it to `data/json/toytags.json` (or `server/json/toytags.json` for arduino-cli) before uploading the file system again.
 
 If the file is corrupted it is renamed to `toytags.json.bak` and an empty list is used. At most 400 tokens can be stored.
 
-## Tests
-
-The protocol and storage code in `lib/ToyPadCore` does not depend on Arduino and has host unit tests
-(test vectors were generated with node-ld):
-
-```bash
-pio test -e native
-```
-
 ## Limitations and differences to the Node.js version
 
-- **Not yet verified on all consoles.** The protocol is ported 1:1 from node-ld and covered by unit tests, but compatibility with each game platform has to be confirmed on real hardware.
+- **Not yet verified on all consoles.** The protocol is ported 1:1 from node-ld, but compatibility with each game platform has to be confirmed on real hardware.
 - The HID endpoints use a max packet size of 64 bytes (TinyUSB default) instead of 32 bytes like the original pad; the reports themselves are 32 bytes. The interface string is `TinyUSB HID`.
 - There is no USB serial port while the firmware is running (see download mode / OTA above).
 - jQuery and jQuery UI are loaded from a CDN by `index.html`, so the device that opens the UI needs Internet access.
   In access point mode without Internet the UI does not work; use your normal Wi-Fi network (station mode) instead.
-- Images for the "Adding Images" feature have to fit into the LittleFS partition (3.4 MB with `default_16MB.csv`, 1.5 MB with `default_8MB.csv`; use a custom partition table for more).
+- Images for the "Adding Images" feature have to fit into the LittleFS partition (3.4 MB with the included `partitions.csv`, 1.5 MB with *8M with spiffs*; enlarge it in `partitions.csv` if needed).
 - `COLAL` (set all colours) is implemented, the Node.js version never forwarded it to the UI.
 - The web UI has no authentication, like the Node.js version. Only use it in trusted networks.

@@ -21,19 +21,17 @@
 #include "WebApi.h"
 #include "config.h"
 
-namespace {
+static UsbToyPad usbToyPad;
+static AsyncWebServer server(TOYPAD_HTTP_PORT);
+static AsyncEventSource events("/events");
+static ToyPadService service;
 
-UsbToyPad usbToyPad;
-AsyncWebServer server(TOYPAD_HTTP_PORT);
-AsyncEventSource events("/events");
-ToyPadService service;
+static bool apMode = false;
+static bool networkUp = false;
+static uint32_t wifiStartedAt = 0;
+static uint32_t lastEventFlush = 0;
 
-bool apMode = false;
-bool networkUp = false;
-uint32_t wifiStartedAt = 0;
-uint32_t lastEventFlush = 0;
-
-void startAccessPoint() {
+static void startAccessPoint() {
   log_i("Starting access point '%s'", TOYPAD_AP_SSID);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_AP);
@@ -41,7 +39,7 @@ void startAccessPoint() {
   apMode = true;
 }
 
-void startWifi() {
+static void startWifi() {
   WiFi.setHostname(TOYPAD_HOSTNAME);
   if (strlen(TOYPAD_WIFI_SSID) == 0) {
     startAccessPoint();
@@ -54,7 +52,7 @@ void startWifi() {
   wifiStartedAt = millis();
 }
 
-void onNetworkUp() {
+static void onNetworkUp() {
   networkUp = true;
   IPAddress ip = apMode ? WiFi.softAPIP() : WiFi.localIP();
   Serial.printf("Toy Pad Emulator ready: http://%s/ or http://%s.local/\n", ip.toString().c_str(), TOYPAD_HOSTNAME);
@@ -70,7 +68,7 @@ void onNetworkUp() {
 }
 
 // Non-blocking Wi-Fi supervision so USB requests are never delayed by it.
-void handleWifi() {
+static void handleWifi() {
   if (networkUp) return;
   if (apMode) {
     onNetworkUp();
@@ -81,8 +79,6 @@ void handleWifi() {
     startAccessPoint();
   }
 }
-
-} // namespace
 
 void setup() {
   Serial.begin(115200);

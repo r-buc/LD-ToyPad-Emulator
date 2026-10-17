@@ -186,7 +186,7 @@ podman create \
 
 ### Option 3: ESP32-S3 microcontroller
 
-A standalone firmware for ESP32-S3 boards (e.g. LilyGO T-Dongle-S3) is available in the [`esp32`](esp32) directory.
+A standalone firmware for ESP32-S3 boards (e.g. LilyGO T-Dongle-S3) is available as an Arduino sketch in the [`esp32/LDToyPadEmulator`](esp32/LDToyPadEmulator) directory.
 The ESP32-S3 emulates the Toy Pad over its native USB port (TinyUSB) and serves the same web UI over Wi-Fi, no computer or Node.js is required.
 See [esp32/README.md](esp32/README.md) for build and flash instructions and the current limitations.
 

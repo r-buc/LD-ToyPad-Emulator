@@ -11,35 +11,29 @@ on:
 permissions:
   contents: read
 
+env:
+  SKETCH: esp32/LDToyPadEmulator
+  FQBN: esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,PartitionScheme=custom,DebugLevel=info
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: esp32
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: platformio-${{ hashFiles('esp32/platformio.ini') }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
-      - name: Unit tests
-        run: pio test -e native
-      - name: Build firmware
-        run: pio run -e t-dongle-s3 -e esp32-s3-devkitc-1
-      - name: Build file system image
-        run: pio run -e t-dongle-s3 -t buildfs
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.2.0 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "ArduinoJson@7.4.2" "Async TCP@3.5.0" "ESP Async WebServer@3.9.6"
+      - name: Compile sketch
+        run: arduino-cli compile --fqbn "$FQBN" --warnings default --output-dir build "$SKETCH"
+      - name: Build LittleFS image
+        run: |
+          MKLITTLEFS=$(find ~/.arduino15/packages/esp32/tools/mklittlefs -name mklittlefs -type f | head -n 1)
+          "$MKLITTLEFS" -c server -p 256 -b 4096 -s 0x360000 build/littlefs.bin
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-s3-firmware
-          path: |
-            esp32/.pio/build/*/firmware.bin
-            esp32/.pio/build/*/bootloader.bin
-            esp32/.pio/build/*/partitions.bin
-            esp32/.pio/build/t-dongle-s3/littlefs.bin
+          path: build/*.bin
