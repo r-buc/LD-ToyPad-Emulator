@@ -90,7 +90,7 @@ void setup() {
   if (!LittleFS.begin(true)) log_e("Failed to mount LittleFS");
 
   service.begin([](const uint8_t *report) { return usbToyPad.send(report); },
-                [](const char *event, const String &json) { events.send(json.c_str(), event, 0); });
+                [](const char *event, const char *json) { events.send(json, event, 0); });
 
   startWifi();
   setupWebApi(server, events, service);

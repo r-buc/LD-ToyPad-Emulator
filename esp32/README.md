@@ -20,7 +20,7 @@ ESP32-S3
   ├─ Protocol            ToyPadEmulator.cpp,   protocol (port of node-ld), compact tag store,
   │                      ToyPadProtocol.cpp,   compiled-in character/vehicle catalog
   │                      TagStore.cpp, Catalog.cpp
-  ├─ LittleFS            web UI (static files), toytags.bin
+  ├─ LittleFS            web UI (gzip compressed static files), toytags.bin
   └─ TinyUSB HID         UsbToyPad.cpp         "LEGO READER V2.10"
            │ USB
 Console / PC
@@ -32,17 +32,19 @@ All files are tabs of the sketch `LDToyPadEmulator/`:
 | --- | --- |
 | `ToyPadProtocol.*` | Frame format (32 byte reports, checksum), command ids, TEA cipher and Burtle random generator used in the authentication, UID helpers, colour conversion. |
 | `ToyPadEmulator.*` | Toy Pad state machine (port of `ToyPadEmu.js` from [node-ld](https://github.com/Berny23/node-ld)): answers `WAKE`, `SEED`, `CHAL`, `READ`, `WRITE`, `MODEL`, `COL`, `FADE`, `COLAL`, `FADAL`, …, keeps the tokens on the pad and queues place/remove events. Hardware independent. |
-| `TagStore.*` | Compact token storage (20 bytes per token in RAM, binary file on flash) and the chunked JSON writer for the web UI. Hardware independent. |
+| `TagStore.*` | Compact token storage (fixed array of 20 byte records in RAM, binary file on flash) and the chunked JSON writer for the web UI. |
 | `Catalog.*`, `CatalogData.h` | Character/vehicle ids and names compiled into the firmware. `CatalogData.h` is generated from `server/json/charactermap.json` and `tokenmap.json` by `esp32/tools/generate_catalog.py`, so the firmware never parses these files. |
 | `UsbToyPad.*` | TinyUSB HID device with the same identity and report descriptor as `usb_setup_script.sh`. |
 | `ToyPadService.*` | Connects USB, protocol, storage and web UI. Port of the logic in `index.js`. |
-| `WebApi.*` | HTTP routes (see below). |
+| `WebApi.*` | HTTP routes (see below). The small, flat JSON request bodies are read directly, without a JSON library. |
 | `LDToyPadEmulator.ino` | `setup()` / `loop()`: startup, Wi-Fi, mDNS, OTA and USB request handling. |
 | `config.h`, `wifi_secrets.example.h` | Settings (Wi-Fi, access point, host name, OTA password, …). |
 | `partitions.csv` | 16 MB partition table with a LittleFS partition, picked up automatically by the Arduino build. |
 
 USB reports are processed in the Arduino loop task, while web requests run in the AsyncTCP task.
 All shared state is protected by a mutex and flash writes are debounced and never done from USB callbacks.
+The firmware uses plain C data (fixed size arrays, C strings, function pointers) instead of `std::string`, `std::vector`
+or a JSON library, so RAM usage is static apart from the web server's own allocations.
 
 ### USB identity
 
@@ -72,7 +74,8 @@ The routes of the Node.js server are kept, the Socket.IO messages are replaced b
 | `GET` | `/json/toytags.json` | – | All saved tokens as minified JSON (`[{"uid","id","type","index","name"}, …]`), streamed in chunks |
 | `GET` | `/events` | – | Server-Sent Events: `refreshTokens`, `Color One`, `Color All`, `Fade One`, `Fade All`, `Connection True` (`data` is the JSON array that was emitted via Socket.IO before) |
 
-Everything else is served from LittleFS (the `server/` directory of this repository).
+Everything else is served from LittleFS: the `server/` directory of this repository, gzip compressed by
+`esp32/tools/build_data.py` (about 24 KB instead of 128 KB). The browser receives the files with `Content-Encoding: gzip`.
 
 ## Requirements
 
@@ -83,7 +86,7 @@ Everything else is served from LittleFS (the `server/` directory of this reposit
   and install "esp32" in the Boards Manager.
 - Libraries (Library Manager):
   - **ESP Async WebServer** by ESP32Async (3.9.x) and its dependency **Async TCP** by ESP32Async (3.5.x)
-  - **ArduinoJson** by Benoit Blanchon (7.x)
+- Python 3 to prepare the web UI files.
 - For uploading the web UI from the IDE: the [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) plugin.
 
 ## Build and flash (Arduino IDE)
@@ -115,8 +118,8 @@ Everything else is served from LittleFS (the `server/` directory of this reposit
 
 5. *Sketch > Upload*.
 
-6. Upload the web UI: copy the contents of the repository's `server/` directory into a new folder
-   `esp32/LDToyPadEmulator/data/` (ignored by git), then press `Ctrl`+`Shift`+`P` and run
+6. Upload the web UI: run `python3 esp32/tools/build_data.py` in the repository root. It writes the gzip compressed
+   files of `server/` to `esp32/LDToyPadEmulator/data/` (ignored by git). Then press `Ctrl`+`Shift`+`P` and run
    **Upload LittleFS to Pico/ESP8266/ESP32** (the serial monitor must be closed). Repeat after updating the repository.
 
 7. Re-plug the board (without pressing BOOT) into the console or PC. It shows up as `LEGO READER V2.10`.
@@ -132,9 +135,11 @@ From the repository root, with the board in download mode on `/dev/ttyACM0`:
 FQBN=esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,PartitionScheme=custom
 arduino-cli compile --fqbn "$FQBN" --upload --port /dev/ttyACM0 esp32/LDToyPadEmulator
 
-# Web UI: build a LittleFS image from server/ and write it to the "spiffs" partition of partitions.csv
+# Web UI: gzip server/ into esp32/LDToyPadEmulator/data, build a LittleFS image from it
+# and write it to the "spiffs" partition of partitions.csv
+python3 esp32/tools/build_data.py
 TOOLS=~/.arduino15/packages/esp32/tools
-$TOOLS/mklittlefs/*/mklittlefs -c server -p 256 -b 4096 -s 0x360000 littlefs.bin
+$TOOLS/mklittlefs/*/mklittlefs -c esp32/LDToyPadEmulator/data -p 256 -b 4096 -s 0x360000 littlefs.bin
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 write_flash 0xc90000 littlefs.bin
 ```
 
@@ -151,7 +156,7 @@ Log output (*Tools > Core Debug Level*) goes to UART0 (U0TXD, 115200 baud), beca
 
 ## Saved tokens
 
-Tokens are kept in RAM in a compact binary form (20 bytes each) and saved to `/toytags.bin` on LittleFS
+Tokens are kept in RAM in a fixed array of compact records (20 bytes each, 8 KB for the maximum of 400 tokens) and saved to `/toytags.bin` on LittleFS
 (a 5 byte header plus 18 bytes per token: UID, type, id and the two vehicle upgrade words). Names are not stored,
 they come from the compiled-in catalog. Positions on the pad are not saved, the pad is empty after a restart.
 The format is not compatible with the Node.js version's `toytags.json`.

@@ -21,18 +21,14 @@
 #include "TagStore.h"
 #include "ToyPadEmulator.h"
 
-#include <functional>
-#include <string>
-#include <vector>
-
 class ToyPadService : public ld::ToyPadListener {
 public:
   enum class Result { Ok, BadRequest, NotFound, Conflict, StorageFull };
 
   // Sends a 32 byte report to the game.
-  using ReportSender = std::function<bool(const uint8_t *report)>;
+  typedef bool (*ReportSender)(const uint8_t *report);
   // Pushes an event (name + JSON payload) to all connected browsers.
-  using Notifier = std::function<void(const char *event, const String &json)>;
+  typedef void (*Notifier)(const char *event, const char *json);
 
   ToyPadService();
 
@@ -47,15 +43,16 @@ public:
   void persist();
 
   // --- Web side ---
-  Result createCharacter(uint16_t id, std::string &uid);
-  Result createVehicle(uint16_t id, std::string &uid);
-  Result place(const std::string &uid, uint8_t pad, uint8_t index);
-  Result remove(uint8_t index, const std::string &uid);
-  Result deleteToken(const std::string &uid);
+  // On success `uid` receives the UID of the new tag.
+  Result createCharacter(uint16_t id, char uid[ld::UID_STRING_SIZE]);
+  Result createVehicle(uint16_t id, char uid[ld::UID_STRING_SIZE]);
+  Result place(const char *uid, uint8_t pad, uint8_t index);
+  Result remove(uint8_t index, const char *uid);
+  Result deleteToken(const char *uid);
   void sync();
-  // Copy of all tags (20 bytes each) for TagJsonWriter.
-  std::vector<ld::TagEntry> tags();
-  String statusJson();
+  // Renders the next part of the toy tags JSON, see TagStore::writeJson.
+  size_t writeTagsJson(ld::TagJsonCursor &cursor, uint8_t *buffer, size_t maxLen);
+  void statusJson(char *out, size_t len);
   bool connected() const { return connected_; }
 
   // ToyPadListener (invoked while the mutex is held)
@@ -67,9 +64,10 @@ public:
   void onTagWrite(const ld::Token &token, uint8_t page, const uint8_t data[ld::PAGE_SIZE]) override;
 
 private:
+  static constexpr size_t MAX_NOTIFICATIONS = 8;
   struct Notification {
     const char *event;
-    String json;
+    char json[80];
   };
 
   class Lock {
@@ -81,17 +79,18 @@ private:
     SemaphoreHandle_t m_;
   };
 
-  void notify(const char *event, const String &json = "null");
+  void notify(const char *event, const char *json = "null"); // caller must hold mutex_
   void deliverNotifications();
   void newUid(uint8_t uid[ld::UID_SIZE]); // caller must hold mutex_
-  Result createEntry(uint16_t id, ld::TagType type, uint32_t upgrades, std::string &uid);
+  Result createEntry(uint16_t id, ld::TagType type, uint32_t upgrades, char uid[ld::UID_STRING_SIZE]);
 
   SemaphoreHandle_t mutex_;
   ld::ToyPadEmulator emulator_;
   ld::TagStore store_;
-  ReportSender sender_;
-  Notifier notifier_;
-  std::vector<Notification> pending_;
+  ReportSender sender_ = nullptr;
+  Notifier notifier_ = nullptr;
+  Notification pending_[MAX_NOTIFICATIONS];
+  size_t pendingCount_ = 0;
   volatile bool connected_ = false;
   uint32_t lastSave_ = 0;
 };

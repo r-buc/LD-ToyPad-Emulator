@@ -18,19 +18,20 @@ const char *TAGS_TMP_PATH = "/toytags.bin.tmp";
 const char *TAGS_BACKUP_PATH = "/toytags.bin.bak";
 
 constexpr uint32_t NEW_VEHICLE_UPGRADES = 0xefffffff;
-// Bounds RAM (20 bytes per tag) and the size of the toy box in the web UI.
-constexpr size_t MAX_TAGS = 400;
+// Tags encoded per flash write in persist().
+constexpr size_t SAVE_BATCH = 16;
 
-String quoted(const std::string &s) { return String("\"") + s.c_str() + "\""; }
-
-String color(const ld::Rgb &c) { return quoted(ld::displayColor(c.r, c.g, c.b)); }
+struct Color {
+  char hex[ld::COLOR_STRING_SIZE];
+  explicit Color(const ld::Rgb &c) { ld::displayColor(c.r, c.g, c.b, hex); }
+};
 } // namespace
 
 ToyPadService::ToyPadService() : mutex_(xSemaphoreCreateMutex()) { emulator_.setListener(this); }
 
 bool ToyPadService::begin(ReportSender sender, Notifier notifier) {
-  sender_ = std::move(sender);
-  notifier_ = std::move(notifier);
+  sender_ = sender;
+  notifier_ = notifier;
 
   Lock lock(mutex_);
   File f = LittleFS.open(TAGS_PATH, "r");
@@ -79,20 +80,38 @@ void ToyPadService::flushEvents() {
 
 void ToyPadService::persist() {
   if (millis() - lastSave_ < TOYPAD_SAVE_INTERVAL_MS) return;
-  std::vector<ld::TagEntry> snapshot;
   {
     Lock lock(mutex_);
     if (!store_.dirty()) return;
-    snapshot = store_.entries();
     store_.clearDirty();
   }
   lastSave_ = millis();
 
-  bool ok = false;
+  // The tags are encoded in small batches, so the mutex is never held during
+  // flash writes. If they change in between (dirty again) the save is
+  // abandoned and repeated after the next interval.
   File f = LittleFS.open(TAGS_TMP_PATH, "w");
-  if (f) {
-    ok = ld::TagStore::save(snapshot, f);
-    f.close();
+  uint8_t buffer[SAVE_BATCH * ld::TagStore::RECORD_SIZE];
+  ld::TagStore::writeHeader(buffer);
+  bool ok = f && f.write(buffer, ld::TagStore::HEADER_SIZE) == ld::TagStore::HEADER_SIZE;
+  bool changed = false;
+  size_t saved = 0;
+  while (ok) {
+    size_t n;
+    {
+      Lock lock(mutex_);
+      changed = store_.dirty();
+      n = changed ? 0 : store_.encode(saved, buffer, SAVE_BATCH);
+    }
+    if (n == 0) break;
+    ok = f.write(buffer, n * ld::TagStore::RECORD_SIZE) == n * ld::TagStore::RECORD_SIZE;
+    saved += n;
+  }
+  if (f) f.close();
+
+  if (ok && changed) {
+    LittleFS.remove(TAGS_TMP_PATH);
+    return;
   }
   if (ok && !LittleFS.rename(TAGS_TMP_PATH, TAGS_PATH)) {
     LittleFS.remove(TAGS_PATH);
@@ -103,7 +122,7 @@ void ToyPadService::persist() {
     Lock lock(mutex_);
     store_.markDirty(); // retry later
   } else {
-    log_d("Saved %u tags to %s", snapshot.size(), TAGS_PATH);
+    log_d("Saved %u tags to %s", saved, TAGS_PATH);
   }
 }
 
@@ -113,35 +132,37 @@ void ToyPadService::newUid(uint8_t uid[ld::UID_SIZE]) {
   } while (store_.find(uid));
 }
 
-ToyPadService::Result ToyPadService::createEntry(uint16_t id, ld::TagType type, uint32_t upgrades, std::string &uid) {
-  const ld::CatalogEntry *item = type == ld::TagType::Character ? ld::findCharacter(id) : ld::findVehicle(id);
+ToyPadService::Result ToyPadService::createEntry(uint16_t id, ld::TagType type, uint32_t upgrades,
+                                                 char uid[ld::UID_STRING_SIZE]) {
+  const ld::CatalogEntry *item = type == ld::TAG_CHARACTER ? ld::findCharacter(id) : ld::findVehicle(id);
   if (!item) return Result::BadRequest;
 
   Lock lock(mutex_);
-  if (store_.size() >= MAX_TAGS) return Result::StorageFull;
-  ld::TagEntry entry;
-  newUid(entry.uid);
-  entry.type = type;
-  entry.id = id;
-  entry.upgradesP23 = upgrades;
-  entry.upgradesP25 = upgrades;
-  store_.add(entry);
-  uid = ld::formatUid(entry.uid);
-  log_i("Created %u (%s) uid %s", id, item->name, uid.c_str());
+  uint8_t uidBytes[ld::UID_SIZE];
+  newUid(uidBytes);
+  ld::TagEntry *entry = store_.add();
+  if (!entry) return Result::StorageFull;
+  memcpy(entry->uid, uidBytes, ld::UID_SIZE);
+  entry->type = type;
+  entry->id = id;
+  entry->upgradesP23 = upgrades;
+  entry->upgradesP25 = upgrades;
+  ld::formatUid(entry->uid, uid);
+  log_i("Created %u (%s) uid %s", id, item->name, uid);
   return Result::Ok;
 }
 
-ToyPadService::Result ToyPadService::createCharacter(uint16_t id, std::string &uid) {
-  return createEntry(id, ld::TagType::Character, 0, uid);
+ToyPadService::Result ToyPadService::createCharacter(uint16_t id, char uid[ld::UID_STRING_SIZE]) {
+  return createEntry(id, ld::TAG_CHARACTER, 0, uid);
 }
 
-ToyPadService::Result ToyPadService::createVehicle(uint16_t id, std::string &uid) {
-  return createEntry(id, ld::TagType::Vehicle, NEW_VEHICLE_UPGRADES, uid);
+ToyPadService::Result ToyPadService::createVehicle(uint16_t id, char uid[ld::UID_STRING_SIZE]) {
+  return createEntry(id, ld::TAG_VEHICLE, NEW_VEHICLE_UPGRADES, uid);
 }
 
-ToyPadService::Result ToyPadService::place(const std::string &uid, uint8_t pad, uint8_t index) {
+ToyPadService::Result ToyPadService::place(const char *uid, uint8_t pad, uint8_t index) {
   uint8_t uidBytes[ld::UID_SIZE];
-  if (!ld::parseUid(uid.c_str(), uidBytes)) return Result::BadRequest;
+  if (!ld::parseUid(uid, uidBytes)) return Result::BadRequest;
 
   Result result;
   {
@@ -154,12 +175,12 @@ ToyPadService::Result ToyPadService::place(const std::string &uid, uint8_t pad, 
       if (t && memcmp(t->uid, uidBytes, ld::UID_SIZE) == 0) return Result::Conflict; // already on the pad
     }
 
-    ld::Token token = entry->type == ld::TagType::Character
+    ld::Token token = entry->type == ld::TAG_CHARACTER
                         ? ld::makeCharacterToken(entry->id, uidBytes)
                         : ld::makeVehicleToken(entry->id, uidBytes, entry->upgradesP23, entry->upgradesP25);
     if (emulator_.place(token, pad, index)) {
       store_.setIndex(uidBytes, index);
-      log_i("Placed %s (%s) on pad %u index %u", uid.c_str(), ld::catalogName(entry->id), pad, index);
+      log_i("Placed %s (%s) on pad %u index %u", uid, ld::catalogName(entry->id), pad, index);
       result = Result::Ok;
     } else {
       result = Result::Conflict;
@@ -168,22 +189,22 @@ ToyPadService::Result ToyPadService::place(const std::string &uid, uint8_t pad, 
   return result;
 }
 
-ToyPadService::Result ToyPadService::remove(uint8_t index, const std::string &uid) {
+ToyPadService::Result ToyPadService::remove(uint8_t index, const char *uid) {
   Lock lock(mutex_);
   const ld::Token *token = emulator_.tokenAt(index);
   if (token) {
     store_.setIndex(token->uid, -1);
-    log_i("Removed index %u (%s)", index, ld::formatUid(token->uid).c_str());
+    log_i("Removed index %u", index);
     emulator_.remove(index);
   }
   uint8_t uidBytes[ld::UID_SIZE];
-  if (ld::parseUid(uid.c_str(), uidBytes)) store_.setIndex(uidBytes, -1);
+  if (ld::parseUid(uid, uidBytes)) store_.setIndex(uidBytes, -1);
   return Result::Ok;
 }
 
-ToyPadService::Result ToyPadService::deleteToken(const std::string &uid) {
+ToyPadService::Result ToyPadService::deleteToken(const char *uid) {
   uint8_t uidBytes[ld::UID_SIZE];
-  if (!ld::parseUid(uid.c_str(), uidBytes)) return Result::BadRequest;
+  if (!ld::parseUid(uid, uidBytes)) return Result::BadRequest;
   {
     Lock lock(mutex_);
     const ld::TagEntry *entry = store_.find(uidBytes);
@@ -191,7 +212,7 @@ ToyPadService::Result ToyPadService::deleteToken(const std::string &uid) {
     const ld::Token *token = entry->index > 0 ? emulator_.tokenAt(static_cast<uint8_t>(entry->index)) : nullptr;
     if (token && memcmp(token->uid, uidBytes, ld::UID_SIZE) == 0) emulator_.remove(token->index);
     store_.erase(uidBytes);
-    log_i("Deleted %s", uid.c_str());
+    log_i("Deleted %s", uid);
     notify("refreshTokens");
   }
   deliverNotifications();
@@ -211,12 +232,12 @@ void ToyPadService::sync() {
   deliverNotifications();
 }
 
-std::vector<ld::TagEntry> ToyPadService::tags() {
+size_t ToyPadService::writeTagsJson(ld::TagJsonCursor &cursor, uint8_t *buffer, size_t maxLen) {
   Lock lock(mutex_);
-  return store_.entries();
+  return store_.writeJson(cursor, buffer, maxLen);
 }
 
-String ToyPadService::statusJson() {
+void ToyPadService::statusJson(char *out, size_t len) {
   size_t tokens = 0, tags = 0;
   {
     Lock lock(mutex_);
@@ -224,20 +245,32 @@ String ToyPadService::statusJson() {
       if (emulator_.tokenAt(i)) tokens++;
     tags = store_.size();
   }
-  return String("{\"connected\":") + (connected_ ? "true" : "false") + ",\"tokensOnPad\":" + tokens + ",\"tags\":" + tags +
-         ",\"freeHeap\":" + ESP.getFreeHeap() + ",\"uptimeMs\":" + millis() + "}";
+  snprintf(out, len, "{\"connected\":%s,\"tokensOnPad\":%u,\"tags\":%u,\"freeHeap\":%u,\"uptimeMs\":%u}",
+           connected_ ? "true" : "false", static_cast<unsigned>(tokens), static_cast<unsigned>(tags),
+           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(millis()));
 }
 
-void ToyPadService::notify(const char *event, const String &json) { pending_.push_back({event, json}); }
+void ToyPadService::notify(const char *event, const char *json) {
+  if (pendingCount_ >= MAX_NOTIFICATIONS) {
+    log_w("Notification queue full, dropping '%s'", event);
+    return;
+  }
+  Notification &n = pending_[pendingCount_++];
+  n.event = event;
+  strlcpy(n.json, json, sizeof(n.json));
+}
 
 void ToyPadService::deliverNotifications() {
-  std::vector<Notification> notifications;
+  Notification notifications[MAX_NOTIFICATIONS];
+  size_t count;
   {
     Lock lock(mutex_);
-    notifications.swap(pending_);
+    count = pendingCount_;
+    memcpy(notifications, pending_, count * sizeof(Notification));
+    pendingCount_ = 0;
   }
   if (!notifier_) return;
-  for (const auto &n : notifications) notifier_(n.event, n.json);
+  for (size_t i = 0; i < count; i++) notifier_(notifications[i].event, notifications[i].json);
 }
 
 void ToyPadService::onWake() {
@@ -247,27 +280,34 @@ void ToyPadService::onWake() {
 }
 
 void ToyPadService::onColor(uint8_t pad, const ld::Rgb &c) {
-  if (pad == 0)
-    notify("Color All", "[" + color(c) + "," + color(c) + "," + color(c) + "]");
-  else
-    notify("Color One", String("[") + pad + "," + color(c) + "]");
+  char json[sizeof(Notification::json)];
+  Color hex(c);
+  if (pad == 0) {
+    snprintf(json, sizeof(json), "[\"%s\",\"%s\",\"%s\"]", hex.hex, hex.hex, hex.hex);
+    notify("Color All", json);
+  } else {
+    snprintf(json, sizeof(json), "[%u,\"%s\"]", pad, hex.hex);
+    notify("Color One", json);
+  }
 }
 
 void ToyPadService::onColorAll(const ld::Rgb colors[3]) {
-  notify("Color All", "[" + color(colors[0]) + "," + color(colors[1]) + "," + color(colors[2]) + "]");
+  char json[sizeof(Notification::json)];
+  snprintf(json, sizeof(json), "[\"%s\",\"%s\",\"%s\"]", Color(colors[0]).hex, Color(colors[1]).hex, Color(colors[2]).hex);
+  notify("Color All", json);
 }
 
 void ToyPadService::onFade(uint8_t pad, const ld::Fade &fade) {
-  notify("Fade One", String("[") + pad + "," + fade.speed + "," + fade.cycles + "," + color(fade.color) + "]");
+  char json[sizeof(Notification::json)];
+  snprintf(json, sizeof(json), "[%u,%u,%u,\"%s\"]", pad, fade.speed, fade.cycles, Color(fade.color).hex);
+  notify("Fade One", json);
 }
 
 void ToyPadService::onFadeAll(const ld::Fade fades[3]) {
-  String json = "[";
-  for (int i = 0; i < 3; i++) {
-    if (i) json += ",";
-    json += String(fades[i].speed) + "," + fades[i].cycles + "," + color(fades[i].color);
-  }
-  json += "]";
+  char json[sizeof(Notification::json)];
+  snprintf(json, sizeof(json), "[%u,%u,\"%s\",%u,%u,\"%s\",%u,%u,\"%s\"]", fades[0].speed, fades[0].cycles,
+           Color(fades[0].color).hex, fades[1].speed, fades[1].cycles, Color(fades[1].color).hex, fades[2].speed,
+           fades[2].cycles, Color(fades[2].color).hex);
   notify("Fade All", json);
 }
 
@@ -275,13 +315,13 @@ void ToyPadService::onTagWrite(const ld::Token &token, uint8_t page, const uint8
   // Vehicle data lives in pages 0x23-0x25 (35-37); like index.js the pages
   // 12 below (23-25) are accepted as well.
   ld::TagEntry *entry = store_.find(token.uid);
-  log_i("REQUEST (CMD_WRITE): index %u page %u uid %s", token.index, page, ld::formatUid(token.uid).c_str());
+  log_i("REQUEST (CMD_WRITE): index %u page %u", token.index, page);
   if (!entry) return;
 
   if (page == 24 || page == 36) {
     // The game rebuilt the vehicle into another model: page 0x24 holds the id.
     entry->id = ld::readU16LE(data);
-    entry->type = ld::TagType::Vehicle;
+    entry->type = ld::TAG_VEHICLE;
     store_.markDirty();
   } else if (page == 23 || page == 35) {
     entry->upgradesP23 = ld::readU32LE(data);

@@ -14,7 +14,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
 namespace ld {
 
@@ -28,6 +27,7 @@ constexpr size_t PAGE_SIZE = 4;
 constexpr size_t UID_SIZE = 7;
 // Hex string representation of a UID (14 characters + terminator).
 constexpr size_t UID_STRING_SIZE = UID_SIZE * 2 + 1;
+constexpr size_t COLOR_STRING_SIZE = 8; // "#rrggbb"
 
 constexpr uint8_t FRAME_TYPE_MESSAGE = 0x55; // request from game / response from pad
 constexpr uint8_t FRAME_TYPE_EVENT = 0x56;   // tag placed/removed notification
@@ -100,12 +100,13 @@ void writeU16BE(uint8_t *p, uint16_t v);
 
 // UID helpers. UIDs are exchanged with the web UI as 14 uppercase hex characters.
 bool parseUid(const char *hex, uint8_t out[UID_SIZE]);
-std::string formatUid(const uint8_t uid[UID_SIZE]);
+void formatUid(const uint8_t uid[UID_SIZE], char out[UID_STRING_SIZE]);
 // Generates a random NXP-like UID (04 xx xx xx xx xx 80) from a random source.
 void randomUid(uint32_t (*random32)(), uint8_t out[UID_SIZE]);
 
 // Maps the raw RGB values the game sends to a colour suitable for display in
-// the web UI (same lookup table as the Node.js implementation).
-std::string displayColor(uint8_t r, uint8_t g, uint8_t b);
+// the web UI (same lookup table as the Node.js implementation) and writes it
+// as "#rrggbb".
+void displayColor(uint8_t r, uint8_t g, uint8_t b, char out[COLOR_STRING_SIZE]);
 
 } // namespace ld

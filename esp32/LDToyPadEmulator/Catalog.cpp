@@ -10,21 +10,27 @@
 
 #include "CatalogData.h"
 
-#include <algorithm>
-
 namespace ld {
 
 namespace {
-template <size_t N> const CatalogEntry *find(const CatalogEntry (&table)[N], uint16_t id) {
-  const CatalogEntry *end = table + N;
-  const CatalogEntry *it = std::lower_bound(table, end, id, [](const CatalogEntry &e, uint16_t v) { return e.id < v; });
-  return it != end && it->id == id ? it : nullptr;
+// Binary search, the generated tables are sorted by id.
+const CatalogEntry *find(const CatalogEntry *table, size_t count, uint16_t id) {
+  size_t lo = 0, hi = count;
+  while (lo < hi) {
+    size_t mid = (lo + hi) / 2;
+    if (table[mid].id == id) return &table[mid];
+    if (table[mid].id < id)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  return nullptr;
 }
 } // namespace
 
-const CatalogEntry *findCharacter(uint16_t id) { return find(CHARACTERS, id); }
+const CatalogEntry *findCharacter(uint16_t id) { return find(CHARACTERS, sizeof(CHARACTERS) / sizeof(CHARACTERS[0]), id); }
 
-const CatalogEntry *findVehicle(uint16_t id) { return find(VEHICLES, id); }
+const CatalogEntry *findVehicle(uint16_t id) { return find(VEHICLES, sizeof(VEHICLES) / sizeof(VEHICLES[0]), id); }
 
 const char *catalogName(uint16_t id) {
   const CatalogEntry *e = isVehicleId(id) ? findVehicle(id) : findCharacter(id);

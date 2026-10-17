@@ -13,4 +13,4 @@
 
 // Registers the REST endpoints (same routes as the Node.js server), the
 // Server-Sent Events stream that replaces Socket.IO and the static web UI.
-void setupWebApi(AsyncWebServer &server, AsyncEventSource &events, ToyPadService &service);
+void setupWebApi(AsyncWebServer &server, AsyncEventSource &events, ToyPadService &toyPadService);

@@ -135,10 +135,8 @@ bool parseUid(const char *hex, uint8_t out[UID_SIZE]) {
   return true;
 }
 
-std::string formatUid(const uint8_t uid[UID_SIZE]) {
-  char buf[UID_STRING_SIZE];
-  for (size_t i = 0; i < UID_SIZE; i++) snprintf(buf + i * 2, 3, "%02X", uid[i]);
-  return std::string(buf);
+void formatUid(const uint8_t uid[UID_SIZE], char out[UID_STRING_SIZE]) {
+  for (size_t i = 0; i < UID_SIZE; i++) snprintf(out + i * 2, 3, "%02X", uid[i]);
 }
 
 void randomUid(uint32_t (*random32)(), uint8_t uid[UID_SIZE]) {
@@ -147,7 +145,7 @@ void randomUid(uint32_t (*random32)(), uint8_t uid[UID_SIZE]) {
   for (size_t i = 1; i < 6; i++) uid[i] = static_cast<uint8_t>(random32() & 0xFF);
 }
 
-std::string displayColor(uint8_t r, uint8_t g, uint8_t b) {
+void displayColor(uint8_t r, uint8_t g, uint8_t b, char out[COLOR_STRING_SIZE]) {
   struct Mapping {
     uint32_t raw;
     uint32_t display;
@@ -195,9 +193,7 @@ std::string displayColor(uint8_t r, uint8_t g, uint8_t b) {
       break;
     }
   }
-  char buf[8];
-  snprintf(buf, sizeof(buf), "#%06x", static_cast<unsigned>(color));
-  return std::string(buf);
+  snprintf(out, COLOR_STRING_SIZE, "#%06x", static_cast<unsigned>(color));
 }
 
 } // namespace ld
