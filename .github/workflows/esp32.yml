@@ -1,0 +1,45 @@
+name: ESP32-S3 firmware
+
+on:
+  push:
+    branches: [master]
+    paths: ["esp32/**", "server/**", ".github/workflows/esp32.yml"]
+  pull_request:
+    branches: [master]
+    paths: ["esp32/**", "server/**", ".github/workflows/esp32.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: esp32
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ hashFiles('esp32/platformio.ini') }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Unit tests
+        run: pio test -e native
+      - name: Build firmware
+        run: pio run -e t-dongle-s3 -e esp32-s3-devkitc-1
+      - name: Build file system image
+        run: pio run -e t-dongle-s3 -t buildfs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-s3-firmware
+          path: |
+            esp32/.pio/build/*/firmware.bin
+            esp32/.pio/build/*/bootloader.bin
+            esp32/.pio/build/*/partitions.bin
+            esp32/.pio/build/t-dongle-s3/littlefs.bin

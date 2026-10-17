@@ -1,1 +1,5 @@
 node_modules
+
+# ESP32-S3 firmware (PlatformIO)
+esp32/.pio/
+esp32/include/wifi_secrets.h

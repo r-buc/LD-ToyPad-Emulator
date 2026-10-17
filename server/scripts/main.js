@@ -1,7 +1,39 @@
 let characters;
 let vehicles;
 
-const socket = io();
+const socket = connectToServer();
+
+// Uses Socket.IO when served by the Node.js server. The ESP32-S3 firmware has no
+// Socket.IO, it pushes events via Server-Sent Events (/events) and receives the
+// client messages as REST calls instead.
+function connectToServer() {
+  if (typeof io === "function") return io();
+
+  const source = new EventSource("events");
+  const routes = {
+    deleteToken: (uid) => ({ method: "DELETE", url: "token", data: { uid: uid } }),
+    syncToyPad: () => ({ method: "POST", url: "sync" }),
+    connectionStatus: () => ({ method: "POST", url: "status" }),
+  };
+  return {
+    on: function (event, handler) {
+      source.addEventListener(event, function (e) {
+        handler(e.data ? JSON.parse(e.data) : null);
+      });
+    },
+    emit: function (event, arg) {
+      const route = routes[event];
+      if (!route) return;
+      const request = route(arg);
+      $.ajax({
+        method: request.method,
+        url: request.url,
+        contentType: "application/json",
+        data: request.data ? JSON.stringify(request.data) : undefined,
+      });
+    },
+  };
+}
 
 $(function () {
   // Pre-load character and vehicle data, since it is required for the operation of the page and there are multiple places it is used

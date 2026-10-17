@@ -30,7 +30,7 @@ Allows you to connect an emulated Toy Pad to your PC or video-game console.
 
 ## Installation
 
-**There are two options.** Please choose the installation method that suits your needs best.
+**There are three options.** Please choose the installation method that suits your needs best.
 
 <hr>
 
@@ -181,6 +181,14 @@ podman create \
 2. Type **your single board computer's IP address** in a browser to use the emulator.
 
    If you want to turn it off, just stop the container (`podman stop ld-tyopad-emulator`) in the terminal window, then use the command `sudo shutdown now` to safely power off the device.
+
+<hr>
+
+### Option 3: ESP32-S3 microcontroller
+
+A standalone firmware for ESP32-S3 boards (e.g. LilyGO T-Dongle-S3) is available in the [`esp32`](esp32) directory.
+The ESP32-S3 emulates the Toy Pad over its native USB port (TinyUSB) and serves the same web UI over Wi-Fi, no computer or Node.js is required.
+See [esp32/README.md](esp32/README.md) for build and flash instructions and the current limitations.
 
 ## Update
 
