@@ -95,7 +95,8 @@ void setupWebApi(AsyncWebServer &server, AsyncEventSource &events, ToyPadService
     uint32_t id;
     if (!readUInt(doc, "id", 1, 0xFFFF, id)) return request->send(400, "text/plain", "Invalid id");
     std::string uid;
-    sendResult(request, service.createCharacter(static_cast<uint16_t>(id), uid));
+    ToyPadService::Result result = service.createCharacter(static_cast<uint16_t>(id), uid);
+    sendResult(request, result, uid.c_str());
   });
 
   // Create a new vehicle/gadget and save it to toytags.json, responds with its UID

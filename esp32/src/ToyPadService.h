@@ -81,7 +81,7 @@ private:
 
   void notify(const char *event, const String &json = "null");
   void deliverNotifications();
-  std::string newUid() const;
+  std::string newUid() const; // caller must hold mutex_
   std::string anyName(uint16_t id) const;
   Result createEntry(uint16_t id, const char *type, uint32_t upgrades, std::string &uid);
 

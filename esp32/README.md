@@ -55,12 +55,12 @@ The routes of the Node.js server are kept, the Socket.IO messages are replaced b
 
 | Method | Path | Body | Description |
 | --- | --- | --- | --- |
-| `POST` | `/character` | `{"id": 1}` | Create a character token |
+| `POST` | `/character` | `{"id": 1}` | Create a character token, responds with its UID |
 | `POST` | `/vehicle` | `{"id": 1000}` | Create a vehicle/gadget token, responds with its UID |
-| `POST` | `/place` | `{"uid": "…", "id": 1, "position": 2, "index": 4}` | Place a token on the pad (`position` 1 = centre, 2 = left, 3 = right; `index` 1–7 like the UI's toy pad boxes) |
+| `POST` | `/place` | `{"uid": "…", "position": 2, "index": 4}` | Place a token on the pad (`position` 1 = centre, 2 = left, 3 = right; `index` 1–7 like the UI's toy pad boxes) |
 | `DELETE` | `/remove` | `{"index": 4, "uid": "…"}` | Remove a token from the pad |
 | `DELETE` | `/token` | `{"uid": "…"}` | Delete a token from `toytags.json` (Socket.IO `deleteToken`) |
-| `POST` | `/sync` | – | Clear the pad and the saved positions (Socket.IO `syncToyPad`) |
+| `POST` | `/sync` | – | Re-synchronise the saved positions in `toytags.json` with the tokens on the pad (Socket.IO `syncToyPad`) |
 | `GET` / `POST` | `/status` | – | `{"connected": …, …}`; `POST` also re-sends `Connection True` (Socket.IO `connectionStatus`) |
 | `GET` | `/json/toytags.json` | – | All saved tokens (also usable as backup) |
 | `GET` | `/events` | – | Server-Sent Events: `refreshTokens`, `Color One`, `Color All`, `Fade One`, `Fade All`, `Connection True` (`data` is the JSON array that was emitted via Socket.IO before) |

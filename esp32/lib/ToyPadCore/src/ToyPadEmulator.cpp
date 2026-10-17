@@ -142,7 +142,7 @@ void ToyPadEmulator::handleRequest(const Request &req, uint8_t *out, size_t &out
     // The game (re)initialised the pad: events queued before are obsolete.
     // Re-announce every token that is already on the pad (highest index first, like node-ld).
     eventHead_ = eventCount_ = 0;
-    for (uint8_t i = MAX_PAD_INDEX; i >= 1; i--)
+    for (int i = MAX_PAD_INDEX; i >= 1; i--)
       if (tokens_[i].present) queueTagEvent(tokens_[i], false);
     connected_ = true;
     if (listener_) listener_->onWake();
