@@ -1,0 +1,9 @@
+# 16 MB layout (LilyGO T-Dongle-S3): 2 x 6.25 MB app slots (OTA) + 3.4 MB LittleFS.
+# Used automatically by the Arduino build because it is in the sketch folder.
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x640000,
+app1,     app,  ota_1,   0x650000,0x640000,
+spiffs,   data, spiffs,  0xc90000,0x360000,
+coredump, data, coredump,0xFF0000,0x10000,

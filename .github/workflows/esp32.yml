@@ -1,0 +1,46 @@
+name: ESP32-S3 firmware
+
+on:
+  push:
+    branches: [master]
+    paths: ["esp32/**", "server/**", ".github/workflows/esp32.yml"]
+  pull_request:
+    branches: [master]
+    paths: ["esp32/**", "server/**", ".github/workflows/esp32.yml"]
+
+permissions:
+  contents: read
+
+env:
+  SKETCH: esp32/LDToyPadEmulator
+  FQBN: esp32:esp32:esp32s3:USBMode=default,CDCOnBoot=default,FlashSize=16M,PartitionScheme=custom,DebugLevel=info
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that CatalogData.h matches the JSON maps
+        run: |
+          python3 esp32/tools/generate_catalog.py
+          git diff --exit-code -- esp32/LDToyPadEmulator/CatalogData.h
+      - name: Unit tests (host)
+        run: make -C esp32/test
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.2.0 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "Async TCP@3.5.0" "ESP Async WebServer@3.9.6"
+      - name: Compile sketch
+        run: arduino-cli compile --fqbn "$FQBN" --warnings default --output-dir build "$SKETCH"
+      - name: Build LittleFS image (gzip compressed web UI)
+        run: |
+          python3 esp32/tools/build_data.py build/data
+          MKLITTLEFS=$(find ~/.arduino15/packages/esp32/tools/mklittlefs -name mklittlefs -type f | head -n 1)
+          "$MKLITTLEFS" -c build/data -p 256 -b 4096 -s 0x360000 build/littlefs.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-s3-firmware
+          path: build/*.bin
