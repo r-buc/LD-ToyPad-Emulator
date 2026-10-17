@@ -7,27 +7,29 @@
 
 #include "WebApi.h"
 
+#include "JsonFields.h"
+
 #include <LittleFS.h>
 
-#include <cerrno>
-#include <cstdlib>
-#include <cstring>
+#include <stdlib.h>
+#include <string.h>
 
-namespace {
+using ld::readString;
+using ld::readUInt;
 
-constexpr size_t MAX_BODY_SIZE = 512;
+static const size_t MAX_BODY_SIZE = 512;
 
-ToyPadService *service = nullptr;
+static ToyPadService *service = nullptr;
 
 // Collects the (small) JSON request body into request->_tempObject, which
 // AsyncWebServerRequest frees when the request is destroyed.
-void collectBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+static void collectBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
   if (total > MAX_BODY_SIZE) return;
   if (index == 0 && !request->_tempObject) request->_tempObject = calloc(total + 1, 1);
   if (request->_tempObject && index + len <= total) memcpy(static_cast<uint8_t *>(request->_tempObject) + index, data, len);
 }
 
-void sendResult(AsyncWebServerRequest *request, ToyPadService::Result result, const char *body = "") {
+static void sendResult(AsyncWebServerRequest *request, ToyPadService::Result result, const char *body = "") {
   switch (result) {
   case ToyPadService::Result::Ok:
     request->send(200, "text/plain", body);
@@ -47,54 +49,9 @@ void sendResult(AsyncWebServerRequest *request, ToyPadService::Result result, co
   }
 }
 
-// The web UI sends flat JSON objects with numbers and short strings, e.g.
-// {"uid":"04A1B2C3D4E580","position":1,"index":2}. Instead of a JSON library
-// the values are looked up directly in the body.
-
-const char *skipSpace(const char *p) {
-  while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-  return p;
-}
-
-// Returns a pointer to the value of "key" or nullptr if the key is missing.
-const char *findValue(const char *body, const char *key) {
-  size_t keyLen = strlen(key);
-  for (const char *p = strchr(body, '"'); p; p = strchr(p + 1, '"')) {
-    if (strncmp(p + 1, key, keyLen) != 0 || p[keyLen + 1] != '"') continue;
-    const char *v = skipSpace(p + keyLen + 2);
-    if (*v == ':') return skipSpace(v + 1);
-  }
-  return nullptr;
-}
-
-// Reads an unsigned integer field in [min, max]; returns false if missing or out of range.
-bool readUInt(const char *body, const char *key, uint32_t min, uint32_t max, uint32_t &out) {
-  const char *v = findValue(body, key);
-  if (!v || *v < '0' || *v > '9') return false;
-  char *end;
-  errno = 0;
-  unsigned long value = strtoul(v, &end, 10);
-  if (errno || (*end && !strchr(",} \t\r\n", *end)) || value < min || value > max) return false;
-  out = static_cast<uint32_t>(value);
-  return true;
-}
-
-// Copies a string field without escape sequences; returns false if missing, not a string or too long.
-bool readString(const char *body, const char *key, char *out, size_t outLen) {
-  const char *v = findValue(body, key);
-  if (!v || *v != '"') return false;
-  v++;
-  size_t len = 0;
-  for (; v[len] != '"'; len++)
-    if (!v[len] || v[len] == '\\' || len + 1 >= outLen) return false;
-  memcpy(out, v, len);
-  out[len] = '\0';
-  return true;
-}
-
 typedef void (*JsonHandler)(AsyncWebServerRequest *request, const char *body);
 
-void onJson(AsyncWebServer &server, const char *uri, WebRequestMethodComposite method, JsonHandler handler) {
+static void onJson(AsyncWebServer &server, const char *uri, WebRequestMethodComposite method, JsonHandler handler) {
   server.on(
     uri, method,
     [handler](AsyncWebServerRequest *request) {
@@ -109,21 +66,21 @@ void onJson(AsyncWebServer &server, const char *uri, WebRequestMethodComposite m
   );
 }
 
-void handleCreateCharacter(AsyncWebServerRequest *request, const char *body) {
+static void handleCreateCharacter(AsyncWebServerRequest *request, const char *body) {
   uint32_t id;
   if (!readUInt(body, "id", 1, 0xFFFF, id)) return request->send(400, "text/plain", "Invalid id");
   char uid[ld::UID_STRING_SIZE] = "";
   sendResult(request, service->createCharacter(static_cast<uint16_t>(id), uid), uid);
 }
 
-void handleCreateVehicle(AsyncWebServerRequest *request, const char *body) {
+static void handleCreateVehicle(AsyncWebServerRequest *request, const char *body) {
   uint32_t id;
   if (!readUInt(body, "id", 1, 0xFFFF, id)) return request->send(400, "text/plain", "Invalid id");
   char uid[ld::UID_STRING_SIZE] = "";
   sendResult(request, service->createVehicle(static_cast<uint16_t>(id), uid), uid);
 }
 
-void handlePlace(AsyncWebServerRequest *request, const char *body) {
+static void handlePlace(AsyncWebServerRequest *request, const char *body) {
   uint32_t position, index;
   char uid[ld::UID_STRING_SIZE];
   if (!readString(body, "uid", uid, sizeof(uid)) || !readUInt(body, "position", 1, 3, position) ||
@@ -132,21 +89,17 @@ void handlePlace(AsyncWebServerRequest *request, const char *body) {
   sendResult(request, service->place(uid, static_cast<uint8_t>(position), static_cast<uint8_t>(index)));
 }
 
-void handleRemove(AsyncWebServerRequest *request, const char *body) {
+static void handleRemove(AsyncWebServerRequest *request, const char *body) {
   uint32_t index;
   if (!readUInt(body, "index", 1, ld::MAX_PAD_INDEX, index)) return request->send(400, "text/plain", "Invalid index");
-  char uid[ld::UID_STRING_SIZE];
-  if (!readString(body, "uid", uid, sizeof(uid))) uid[0] = '\0';
-  sendResult(request, service->remove(static_cast<uint8_t>(index), uid), "true");
+  sendResult(request, service->remove(static_cast<uint8_t>(index)), "true");
 }
 
-void handleDeleteToken(AsyncWebServerRequest *request, const char *body) {
+static void handleDeleteToken(AsyncWebServerRequest *request, const char *body) {
   char uid[ld::UID_STRING_SIZE];
   if (!readString(body, "uid", uid, sizeof(uid))) return request->send(400, "text/plain", "Invalid uid");
   sendResult(request, service->deleteToken(uid));
 }
-
-} // namespace
 
 void setupWebApi(AsyncWebServer &server, AsyncEventSource &events, ToyPadService &toyPadService) {
   service = &toyPadService;

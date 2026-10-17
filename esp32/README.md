@@ -32,11 +32,12 @@ All files are tabs of the sketch `LDToyPadEmulator/`:
 | --- | --- |
 | `ToyPadProtocol.*` | Frame format (32 byte reports, checksum), command ids, TEA cipher and Burtle random generator used in the authentication, UID helpers, colour conversion. |
 | `ToyPadEmulator.*` | Toy Pad state machine (port of `ToyPadEmu.js` from [node-ld](https://github.com/Berny23/node-ld)): answers `WAKE`, `SEED`, `CHAL`, `READ`, `WRITE`, `MODEL`, `COL`, `FADE`, `COLAL`, `FADAL`, …, keeps the tokens on the pad and queues place/remove events. Hardware independent. |
-| `TagStore.*` | Compact token storage (fixed array of 20 byte records in RAM, binary file on flash) and the chunked JSON writer for the web UI. |
+| `TagStore.*` | Compact token storage (fixed array of 17 byte records in RAM, binary records for the file on flash) and the chunked JSON writer for the web UI. Hardware independent. |
 | `Catalog.*`, `CatalogData.h` | Character/vehicle ids and names compiled into the firmware. `CatalogData.h` is generated from `server/json/charactermap.json` and `tokenmap.json` by `esp32/tools/generate_catalog.py`, so the firmware never parses these files. |
 | `UsbToyPad.*` | TinyUSB HID device with the same identity and report descriptor as `usb_setup_script.sh`. |
 | `ToyPadService.*` | Connects USB, protocol, storage and web UI. Port of the logic in `index.js`. |
-| `WebApi.*` | HTTP routes (see below). The small, flat JSON request bodies are read directly, without a JSON library. |
+| `WebApi.*` | HTTP routes (see below). |
+| `JsonFields.*` | Reads fields of the small, flat JSON request bodies directly, without a JSON library. Hardware independent. |
 | `LDToyPadEmulator.ino` | `setup()` / `loop()`: startup, Wi-Fi, mDNS, OTA and USB request handling. |
 | `config.h`, `wifi_secrets.example.h` | Settings (Wi-Fi, access point, host name, OTA password, …). |
 | `partitions.csv` | 16 MB partition table with a LittleFS partition, picked up automatically by the Arduino build. |
@@ -45,6 +46,18 @@ USB reports are processed in the Arduino loop task, while web requests run in th
 All shared state is protected by a mutex and flash writes are debounced and never done from USB callbacks.
 The firmware uses plain C data (fixed size arrays, C strings, function pointers) instead of `std::string`, `std::vector`
 or a JSON library, so RAM usage is static apart from the web server's own allocations.
+
+### Memory usage
+
+Most of the *Global variables* reported by the compiler belong to the ESP32 core and not to the sketch: a sketch that
+only starts Wi-Fi, the async web server with Server-Sent Events, the TinyUSB HID device, LittleFS, mDNS and OTA,
+without any emulator code, already reports about 70 KB (Wi-Fi driver, lwIP, TinyUSB endpoint buffers of the
+precompiled core, …). The emulator adds about 8 KB, mostly the token list (17 bytes × 400 tokens) and the tag memory
+of the tokens on the pad (7 × 180 bytes).
+
+Constant data (`static const` tables such as the character catalog, the USB descriptors and all string literals) is
+placed in flash on the ESP32 and does not use RAM. Unlike on AVR boards, `PROGMEM` is empty and `F()` only changes
+the pointer type in the ESP32 Arduino core, so they would not save any memory and are not used.
 
 ### USB identity
 
@@ -67,9 +80,9 @@ The routes of the Node.js server are kept, the Socket.IO messages are replaced b
 | `POST` | `/character` | `{"id": 1}` | Create a character token, responds with its UID |
 | `POST` | `/vehicle` | `{"id": 1000}` | Create a vehicle/gadget token, responds with its UID |
 | `POST` | `/place` | `{"uid": "…", "position": 2, "index": 4}` | Place a token on the pad (`position` 1 = centre, 2 = left, 3 = right; `index` 1–7 like the UI's toy pad boxes) |
-| `DELETE` | `/remove` | `{"index": 4, "uid": "…"}` | Remove a token from the pad |
+| `DELETE` | `/remove` | `{"index": 4}` | Remove a token from the pad (other fields such as `uid` are ignored) |
 | `DELETE` | `/token` | `{"uid": "…"}` | Delete a saved token (Socket.IO `deleteToken`) |
-| `POST` | `/sync` | – | Re-synchronise the positions in the token list with the tokens on the pad (Socket.IO `syncToyPad`) |
+| `POST` | `/sync` | – | Ask the web UI to reload the token list (Socket.IO `syncToyPad`); positions are always taken from the pad |
 | `GET` / `POST` | `/status` | – | `{"connected": …, …}`; `POST` also re-sends `Connection True` (Socket.IO `connectionStatus`) |
 | `GET` | `/json/toytags.json` | – | All saved tokens as minified JSON (`[{"uid","id","type","index","name"}, …]`), streamed in chunks |
 | `GET` | `/events` | – | Server-Sent Events: `refreshTokens`, `Color One`, `Color All`, `Fade One`, `Fade All`, `Connection True` (`data` is the JSON array that was emitted via Socket.IO before) |
@@ -156,15 +169,18 @@ Log output (*Tools > Core Debug Level*) goes to UART0 (U0TXD, 115200 baud), beca
 
 ## Saved tokens
 
-Tokens are kept in RAM in a fixed array of compact records (20 bytes each, 8 KB for the maximum of 400 tokens) and saved to `/toytags.bin` on LittleFS
-(a 5 byte header plus 18 bytes per token: UID, type, id and the two vehicle upgrade words). Names are not stored,
-they come from the compiled-in catalog. Positions on the pad are not saved, the pad is empty after a restart.
+Tokens are kept in RAM in a fixed array of compact records (17 bytes each, 6.8 KB for the maximum of 400 tokens) and saved to `/toytags.bin` on LittleFS
+(a 5 byte header `LDTT` + version 2, then 17 bytes per token: UID, id and the two vehicle upgrade words, little endian).
+Names are not stored, they come from the compiled-in catalog, and the type follows from the id (vehicles and gadgets
+use ids from 1000). Positions on the pad are not saved, the pad is empty after a restart.
 The format is not compatible with the Node.js version's `toytags.json`.
 
 > [!WARNING]
 > Uploading the web UI (LittleFS image) overwrites the whole file system including your saved tokens.
 
 If the file is corrupted it is renamed to `toytags.bin.bak` and an empty list is used. At most 400 tokens can be stored.
+
+Files written by earlier versions of this firmware (version 1) are treated as corrupted.
 
 ### Changing the character/vehicle lists
 
@@ -173,6 +189,16 @@ After changing the JSON files, regenerate it and rebuild the firmware:
 
 ```bash
 python3 esp32/tools/generate_catalog.py
+```
+
+## Tests
+
+The hardware independent parts (protocol, emulator, tag store, catalog, request body reader) have host side unit
+tests in `esp32/test/`, using [Unity](https://github.com/ThrowTheSwitch/Unity). The expected protocol values were
+generated with node-ld. They need `g++`, `make` and `git` (Unity is downloaded into `esp32/test/build/` on first use):
+
+```bash
+make -C esp32/test
 ```
 
 ## Limitations and differences to the Node.js version

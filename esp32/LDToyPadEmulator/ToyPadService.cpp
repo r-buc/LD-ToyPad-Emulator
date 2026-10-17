@@ -12,20 +12,18 @@
 #include <LittleFS.h>
 #include <esp_random.h>
 
-namespace {
-const char *TAGS_PATH = "/toytags.bin";
-const char *TAGS_TMP_PATH = "/toytags.bin.tmp";
-const char *TAGS_BACKUP_PATH = "/toytags.bin.bak";
+static const char TAGS_PATH[] = "/toytags.bin";
+static const char TAGS_TMP_PATH[] = "/toytags.bin.tmp";
+static const char TAGS_BACKUP_PATH[] = "/toytags.bin.bak";
 
-constexpr uint32_t NEW_VEHICLE_UPGRADES = 0xefffffff;
+static const uint32_t NEW_VEHICLE_UPGRADES = 0xefffffff;
 // Tags encoded per flash write in persist().
-constexpr size_t SAVE_BATCH = 16;
+static const size_t SAVE_BATCH = 16;
 
 struct Color {
   char hex[ld::COLOR_STRING_SIZE];
   explicit Color(const ld::Rgb &c) { ld::displayColor(c.r, c.g, c.b, hex); }
 };
-} // namespace
 
 ToyPadService::ToyPadService() : mutex_(xSemaphoreCreateMutex()) { emulator_.setListener(this); }
 
@@ -39,12 +37,18 @@ bool ToyPadService::begin(ReportSender sender, Notifier notifier) {
     log_w("%s not found, starting with an empty toy box", TAGS_PATH);
     return true;
   }
-  bool ok = store_.load(f);
+  uint8_t record[ld::TagStore::RECORD_SIZE];
+  bool ok = f.read(record, ld::TagStore::HEADER_SIZE) == ld::TagStore::HEADER_SIZE && ld::TagStore::validHeader(record);
+  store_.clear();
+  while (ok && f.available()) {
+    ok = f.read(record, sizeof(record)) == sizeof(record) && store_.loadRecord(record);
+  }
   f.close();
   if (!ok) {
     log_e("%s is corrupt, moving it to %s", TAGS_PATH, TAGS_BACKUP_PATH);
     LittleFS.remove(TAGS_BACKUP_PATH);
     LittleFS.rename(TAGS_PATH, TAGS_BACKUP_PATH);
+    store_.clear();
     store_.markDirty();
   }
   log_i("Loaded %u toy tags", store_.size());
@@ -132,9 +136,9 @@ void ToyPadService::newUid(uint8_t uid[ld::UID_SIZE]) {
   } while (store_.find(uid));
 }
 
-ToyPadService::Result ToyPadService::createEntry(uint16_t id, ld::TagType type, uint32_t upgrades,
+ToyPadService::Result ToyPadService::createEntry(uint16_t id, bool vehicle, uint32_t upgrades,
                                                  char uid[ld::UID_STRING_SIZE]) {
-  const ld::CatalogEntry *item = type == ld::TAG_CHARACTER ? ld::findCharacter(id) : ld::findVehicle(id);
+  const ld::CatalogEntry *item = vehicle ? ld::findVehicle(id) : ld::findCharacter(id);
   if (!item) return Result::BadRequest;
 
   Lock lock(mutex_);
@@ -143,7 +147,6 @@ ToyPadService::Result ToyPadService::createEntry(uint16_t id, ld::TagType type, 
   ld::TagEntry *entry = store_.add();
   if (!entry) return Result::StorageFull;
   memcpy(entry->uid, uidBytes, ld::UID_SIZE);
-  entry->type = type;
   entry->id = id;
   entry->upgradesP23 = upgrades;
   entry->upgradesP25 = upgrades;
@@ -153,11 +156,11 @@ ToyPadService::Result ToyPadService::createEntry(uint16_t id, ld::TagType type, 
 }
 
 ToyPadService::Result ToyPadService::createCharacter(uint16_t id, char uid[ld::UID_STRING_SIZE]) {
-  return createEntry(id, ld::TAG_CHARACTER, 0, uid);
+  return createEntry(id, false, 0, uid);
 }
 
 ToyPadService::Result ToyPadService::createVehicle(uint16_t id, char uid[ld::UID_STRING_SIZE]) {
-  return createEntry(id, ld::TAG_VEHICLE, NEW_VEHICLE_UPGRADES, uid);
+  return createEntry(id, true, NEW_VEHICLE_UPGRADES, uid);
 }
 
 ToyPadService::Result ToyPadService::place(const char *uid, uint8_t pad, uint8_t index) {
@@ -170,16 +173,12 @@ ToyPadService::Result ToyPadService::place(const char *uid, uint8_t pad, uint8_t
     const ld::TagEntry *entry = store_.find(uidBytes);
     if (!entry) return Result::NotFound;
 
-    for (uint8_t i = 1; i <= ld::MAX_PAD_INDEX; i++) {
-      const ld::Token *t = emulator_.tokenAt(i);
-      if (t && memcmp(t->uid, uidBytes, ld::UID_SIZE) == 0) return Result::Conflict; // already on the pad
-    }
+    if (emulator_.indexOf(uidBytes) > 0) return Result::Conflict; // already on the pad
 
-    ld::Token token = entry->type == ld::TAG_CHARACTER
-                        ? ld::makeCharacterToken(entry->id, uidBytes)
-                        : ld::makeVehicleToken(entry->id, uidBytes, entry->upgradesP23, entry->upgradesP25);
+    ld::Token token = ld::isVehicleId(entry->id)
+                        ? ld::makeVehicleToken(entry->id, uidBytes, entry->upgradesP23, entry->upgradesP25)
+                        : ld::makeCharacterToken(entry->id, uidBytes);
     if (emulator_.place(token, pad, index)) {
-      store_.setIndex(uidBytes, index);
       log_i("Placed %s (%s) on pad %u index %u", uid, ld::catalogName(entry->id), pad, index);
       result = Result::Ok;
     } else {
@@ -189,16 +188,9 @@ ToyPadService::Result ToyPadService::place(const char *uid, uint8_t pad, uint8_t
   return result;
 }
 
-ToyPadService::Result ToyPadService::remove(uint8_t index, const char *uid) {
+ToyPadService::Result ToyPadService::remove(uint8_t index) {
   Lock lock(mutex_);
-  const ld::Token *token = emulator_.tokenAt(index);
-  if (token) {
-    store_.setIndex(token->uid, -1);
-    log_i("Removed index %u", index);
-    emulator_.remove(index);
-  }
-  uint8_t uidBytes[ld::UID_SIZE];
-  if (ld::parseUid(uid, uidBytes)) store_.setIndex(uidBytes, -1);
+  if (emulator_.remove(index)) log_i("Removed index %u", index);
   return Result::Ok;
 }
 
@@ -209,8 +201,8 @@ ToyPadService::Result ToyPadService::deleteToken(const char *uid) {
     Lock lock(mutex_);
     const ld::TagEntry *entry = store_.find(uidBytes);
     if (!entry) return Result::NotFound;
-    const ld::Token *token = entry->index > 0 ? emulator_.tokenAt(static_cast<uint8_t>(entry->index)) : nullptr;
-    if (token && memcmp(token->uid, uidBytes, ld::UID_SIZE) == 0) emulator_.remove(token->index);
+    int index = emulator_.indexOf(uidBytes);
+    if (index > 0) emulator_.remove(static_cast<uint8_t>(index));
     store_.erase(uidBytes);
     log_i("Deleted %s", uid);
     notify("refreshTokens");
@@ -221,12 +213,8 @@ ToyPadService::Result ToyPadService::deleteToken(const char *uid) {
 
 void ToyPadService::sync() {
   {
+    // The positions in the tag list are always taken from the pad, the UI only needs to reload it.
     Lock lock(mutex_);
-    store_.resetIndexes();
-    for (uint8_t i = 1; i <= ld::MAX_PAD_INDEX; i++) {
-      const ld::Token *token = emulator_.tokenAt(i);
-      if (token) store_.setIndex(token->uid, i);
-    }
     notify("refreshTokens");
   }
   deliverNotifications();
@@ -234,7 +222,7 @@ void ToyPadService::sync() {
 
 size_t ToyPadService::writeTagsJson(ld::TagJsonCursor &cursor, uint8_t *buffer, size_t maxLen) {
   Lock lock(mutex_);
-  return store_.writeJson(cursor, buffer, maxLen);
+  return store_.writeJson(cursor, emulator_, buffer, maxLen);
 }
 
 void ToyPadService::statusJson(char *out, size_t len) {
@@ -321,7 +309,6 @@ void ToyPadService::onTagWrite(const ld::Token &token, uint8_t page, const uint8
   if (page == 24 || page == 36) {
     // The game rebuilt the vehicle into another model: page 0x24 holds the id.
     entry->id = ld::readU16LE(data);
-    entry->type = ld::TAG_VEHICLE;
     store_.markDirty();
   } else if (page == 23 || page == 35) {
     entry->upgradesP23 = ld::readU32LE(data);

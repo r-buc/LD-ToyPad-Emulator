@@ -4,3 +4,4 @@ node_modules
 esp32/LDToyPadEmulator/wifi_secrets.h
 esp32/LDToyPadEmulator/data/
 esp32/LDToyPadEmulator/build/
+esp32/test/build/

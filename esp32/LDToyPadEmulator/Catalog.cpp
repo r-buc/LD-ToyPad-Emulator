@@ -12,9 +12,8 @@
 
 namespace ld {
 
-namespace {
 // Binary search, the generated tables are sorted by id.
-const CatalogEntry *find(const CatalogEntry *table, size_t count, uint16_t id) {
+static const CatalogEntry *find(const CatalogEntry *table, size_t count, uint16_t id) {
   size_t lo = 0, hi = count;
   while (lo < hi) {
     size_t mid = (lo + hi) / 2;
@@ -26,7 +25,6 @@ const CatalogEntry *find(const CatalogEntry *table, size_t count, uint16_t id) {
   }
   return nullptr;
 }
-} // namespace
 
 const CatalogEntry *findCharacter(uint16_t id) { return find(CHARACTERS, sizeof(CHARACTERS) / sizeof(CHARACTERS[0]), id); }
 

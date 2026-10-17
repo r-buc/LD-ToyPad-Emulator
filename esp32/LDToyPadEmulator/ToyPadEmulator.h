@@ -83,6 +83,8 @@ public:
 
   // Returns the token at `index` or nullptr.
   const Token *tokenAt(uint8_t index) const;
+  // Returns the position (1..7) of the token with this UID or -1 if it is not on the pad.
+  int indexOf(const uint8_t uid[UID_SIZE]) const;
   size_t tokensOnPad(uint8_t pad) const;
 
   // Pending tag place/remove events (32 byte frames of type 0x56).
@@ -97,7 +99,7 @@ private:
   void queueTagEvent(const Token &token, bool removed);
   void handleRequest(const Request &req, uint8_t *payload, size_t &payloadLen);
 
-  Token tokens_[MAX_PAD_INDEX + 1];
+  Token tokens_[MAX_PAD_INDEX]; // tokens_[index - 1]
   uint8_t events_[EVENT_QUEUE_SIZE][REPORT_SIZE];
   size_t eventHead_ = 0;
   size_t eventCount_ = 0;

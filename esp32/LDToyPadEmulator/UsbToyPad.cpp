@@ -14,10 +14,8 @@
 #error "Select Tools > USB CDC On Boot > Disabled (FQBN option CDCOnBoot=default) so the device only exposes the Toy Pad HID interface"
 #endif
 
-namespace {
-
 // Identical to the descriptor written to functions/hid.g0/report_desc by usb_setup_script.sh
-const uint8_t REPORT_DESCRIPTOR[] = {
+static const uint8_t REPORT_DESCRIPTOR[] = {
   0x06, 0x00, 0xFF, // Usage Page (Vendor Defined 0xFF00)
   0x09, 0x01,       // Usage (0x01)
   0xA1, 0x01,       // Collection (Application)
@@ -34,9 +32,7 @@ const uint8_t REPORT_DESCRIPTOR[] = {
   0xC0,             // End Collection
 };
 
-constexpr size_t RX_QUEUE_LENGTH = 16;
-
-} // namespace
+static const size_t RX_QUEUE_LENGTH = 16;
 
 UsbToyPad::UsbToyPad() : hid_() {
   static bool registered = false;

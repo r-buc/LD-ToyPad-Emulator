@@ -11,12 +11,11 @@
 
 namespace ld {
 
-namespace {
-const uint8_t TEA_KEY[16] = {0x55, 0xFE, 0xF6, 0xB0, 0x62, 0xBF, 0x0B, 0x41, 0xC9, 0xB3, 0x7C, 0xB4, 0x97, 0x3E, 0x29, 0x7B};
+static const uint8_t TEA_KEY[16] = {0x55, 0xFE, 0xF6, 0xB0, 0x62, 0xBF, 0x0B, 0x41, 0xC9, 0xB3, 0x7C, 0xB4, 0x97, 0x3E, 0x29, 0x7B};
 // "(c) LEGO 2014"
-const uint8_t WAKE_RESPONSE[] = {0x28, 0x63, 0x29, 0x20, 0x4c, 0x45, 0x47, 0x4f, 0x20, 0x32, 0x30, 0x31, 0x34};
+static const uint8_t WAKE_RESPONSE[] = {0x28, 0x63, 0x29, 0x20, 0x4c, 0x45, 0x47, 0x4f, 0x20, 0x32, 0x30, 0x31, 0x34};
 
-Rgb rgbAt(const uint8_t *p) {
+static Rgb rgbAt(const uint8_t *p) {
   Rgb c;
   c.r = p[0];
   c.g = p[1];
@@ -24,14 +23,13 @@ Rgb rgbAt(const uint8_t *p) {
   return c;
 }
 
-Fade fadeAt(const uint8_t *p) {
+static Fade fadeAt(const uint8_t *p) {
   Fade f;
   f.speed = p[0];
   f.cycles = p[1];
   f.color = rgbAt(p + 2);
   return f;
 }
-} // namespace
 
 Token makeCharacterToken(uint16_t id, const uint8_t uid[UID_SIZE]) {
   Token t;
@@ -54,9 +52,9 @@ ToyPadEmulator::ToyPadEmulator() : tea_(TEA_KEY) { memset(events_, 0, sizeof(eve
 
 bool ToyPadEmulator::place(const Token &token, uint8_t pad, uint8_t index) {
   if (pad < 1 || pad > 3 || index < 1 || index > MAX_PAD_INDEX) return false;
-  if (tokens_[index].present) return false;
+  if (tokens_[index - 1].present) return false;
   if (tokensOnPad(pad) >= (pad == 1 ? 1u : 3u)) return false;
-  Token &slot = tokens_[index];
+  Token &slot = tokens_[index - 1];
   slot = token;
   slot.present = true;
   slot.pad = pad;
@@ -66,9 +64,9 @@ bool ToyPadEmulator::place(const Token &token, uint8_t pad, uint8_t index) {
 }
 
 bool ToyPadEmulator::remove(uint8_t index) {
-  if (index < 1 || index > MAX_PAD_INDEX || !tokens_[index].present) return false;
-  queueTagEvent(tokens_[index], true);
-  tokens_[index] = Token();
+  if (index < 1 || index > MAX_PAD_INDEX || !tokens_[index - 1].present) return false;
+  queueTagEvent(tokens_[index - 1], true);
+  tokens_[index - 1] = Token();
   return true;
 }
 
@@ -78,14 +76,20 @@ void ToyPadEmulator::clear() {
 }
 
 const Token *ToyPadEmulator::tokenAt(uint8_t index) const {
-  if (index < 1 || index > MAX_PAD_INDEX || !tokens_[index].present) return nullptr;
-  return &tokens_[index];
+  if (index < 1 || index > MAX_PAD_INDEX || !tokens_[index - 1].present) return nullptr;
+  return &tokens_[index - 1];
+}
+
+int ToyPadEmulator::indexOf(const uint8_t uid[UID_SIZE]) const {
+  for (uint8_t i = 1; i <= MAX_PAD_INDEX; i++)
+    if (tokens_[i - 1].present && memcmp(tokens_[i - 1].uid, uid, UID_SIZE) == 0) return i;
+  return -1;
 }
 
 size_t ToyPadEmulator::tokensOnPad(uint8_t pad) const {
   size_t n = 0;
   for (uint8_t i = 1; i <= MAX_PAD_INDEX; i++)
-    if (tokens_[i].present && tokens_[i].pad == pad) n++;
+    if (tokens_[i - 1].present && tokens_[i - 1].pad == pad) n++;
   return n;
 }
 
@@ -143,7 +147,7 @@ void ToyPadEmulator::handleRequest(const Request &req, uint8_t *out, size_t &out
     // Re-announce every token that is already on the pad (highest index first, like node-ld).
     eventHead_ = eventCount_ = 0;
     for (int i = MAX_PAD_INDEX; i >= 1; i--)
-      if (tokens_[i].present) queueTagEvent(tokens_[i], false);
+      if (tokens_[i - 1].present) queueTagEvent(tokens_[i - 1], false);
     connected_ = true;
     if (listener_) listener_->onWake();
     break;
@@ -211,8 +215,8 @@ void ToyPadEmulator::handleRequest(const Request &req, uint8_t *out, size_t &out
     uint8_t page = p[1];
     out[0] = 0;
     outLen = 1;
-    if (index >= 1 && index <= MAX_PAD_INDEX && tokens_[index].present) {
-      Token &token = tokens_[index];
+    if (index >= 1 && index <= MAX_PAD_INDEX && tokens_[index - 1].present) {
+      Token &token = tokens_[index - 1];
       size_t start = static_cast<size_t>(page) * PAGE_SIZE;
       if (start + PAGE_SIZE <= TOKEN_SIZE) memcpy(token.data + start, p + 2, PAGE_SIZE);
       if (listener_) listener_->onTagWrite(token, page, p + 2);

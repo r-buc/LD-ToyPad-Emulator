@@ -47,7 +47,7 @@ public:
   Result createCharacter(uint16_t id, char uid[ld::UID_STRING_SIZE]);
   Result createVehicle(uint16_t id, char uid[ld::UID_STRING_SIZE]);
   Result place(const char *uid, uint8_t pad, uint8_t index);
-  Result remove(uint8_t index, const char *uid);
+  Result remove(uint8_t index);
   Result deleteToken(const char *uid);
   void sync();
   // Renders the next part of the toy tags JSON, see TagStore::writeJson.
@@ -67,7 +67,7 @@ private:
   static constexpr size_t MAX_NOTIFICATIONS = 8;
   struct Notification {
     const char *event;
-    char json[80];
+    char json[64];
   };
 
   class Lock {
@@ -82,7 +82,7 @@ private:
   void notify(const char *event, const char *json = "null"); // caller must hold mutex_
   void deliverNotifications();
   void newUid(uint8_t uid[ld::UID_SIZE]); // caller must hold mutex_
-  Result createEntry(uint16_t id, ld::TagType type, uint32_t upgrades, char uid[ld::UID_STRING_SIZE]);
+  Result createEntry(uint16_t id, bool vehicle, uint32_t upgrades, char uid[ld::UID_STRING_SIZE]);
 
   SemaphoreHandle_t mutex_;
   ld::ToyPadEmulator emulator_;
